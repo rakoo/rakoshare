@@ -179,14 +179,19 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 		return
 	}
 
+	go t.StartPex()
+
 	t.si = &SessionInfo{
-		PeerId:        peerId(),
-		Port:          listenPort,
-		UseDHT:        useDHT,
-		FromMagnet:    fromMagnet,
-		HaveTorrent:   false,
-		ME:            &MetaDataExchange{},
-		OurExtensions: map[int]string{1: "ut_metadat"},
+		PeerId:      peerId(),
+		Port:        listenPort,
+		UseDHT:      useDHT,
+		FromMagnet:  fromMagnet,
+		HaveTorrent: false,
+		ME:          &MetaDataExchange{},
+		OurExtensions: map[int]string{
+			1: "ut_metadata",
+			2: "ut_pex",
+		},
 	}
 
 	if !t.si.FromMagnet {
@@ -321,6 +326,13 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 
 	peersInfoHash := string(theirheader[8:28])
 	id := string(theirheader[28:48])
+
+	// If it's us, we don't need to continue
+	if id == ts.si.PeerId {
+		log.Println("Tried to connecting tou ourselves. Closing.")
+		conn.Close()
+		return
+	}
 
 	btconn := &btConn{
 		header:   theirheader,
@@ -1022,6 +1034,8 @@ func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
 		switch ext {
 		case "ut_metadata":
 			t.DoMetadata(msg[1:], p)
+		case "ut_pex":
+			t.DoPex(msg[1:], p)
 		default:
 			log.Println("Unknown extension: ", ext)
 		}
@@ -1030,12 +1044,6 @@ func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
 	}
 
 	return nil
-}
-
-type MetadataMessage struct {
-	MsgType   uint8 "msg_type"
-	Piece     uint  "piece"
-	TotalSize uint  "total_size"
 }
 
 func (t *TorrentSession) sendRequest(peer *peerState, index, begin, length uint32) (err error) {

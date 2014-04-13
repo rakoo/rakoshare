@@ -10,6 +10,12 @@ import (
 	bencode "code.google.com/p/bencode-go"
 )
 
+type MetadataMessage struct {
+	MsgType   uint8 "msg_type"
+	Piece     uint  "piece"
+	TotalSize uint  "total_size"
+}
+
 func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 	// We need a buffered reader because the raw data is put directly
 	// after the bencoded data, and a simple reader will get all its bytes

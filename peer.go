@@ -151,6 +151,7 @@ func (p *peerState) SendExtensions(port int) {
 	handshake := map[string]interface{}{
 		"m": map[string]int{
 			"ut_metadata": 1,
+			"ut_pex":      2,
 		},
 		"v": "Taipei-Torrent dev",
 	}
@@ -278,23 +279,30 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 }
 
 func (p *peerState) sendMetadataRequest(piece int) {
-	log.Printf("Sending metadata request for piece %d to %s\n", piece, p.address)
-
-	m := map[string]int{
-		"msg_type": METADATA_REQUEST,
-		"piece":    piece,
+	metaMessage := MetadataMessage{
+		MsgType: METADATA_REQUEST,
+		Piece:   uint(piece),
 	}
 
-	var raw bytes.Buffer
-	err := bencode.Marshal(&raw, m)
-	if err != nil {
+	p.sendExtensionMessage("ut_metadata", metaMessage)
+}
+
+func (p *peerState) sendExtensionMessage(typ string, data interface{}) {
+	if _, ok := p.theirExtensions[typ]; !ok {
+		// They don't understand ut_pex
 		return
 	}
 
-	msg := make([]byte, raw.Len()+2)
+	var payload bytes.Buffer
+	err := bencode.Marshal(&payload, data)
+	if err != nil {
+		log.Printf("Couldn't marshal extension message: ", err)
+	}
+
+	msg := make([]byte, 2+payload.Len())
 	msg[0] = EXTENSION
-	msg[1] = byte(p.theirExtensions["ut_metadata"])
-	copy(msg[2:], raw.Bytes())
+	msg[1] = byte(p.theirExtensions[typ])
+	copy(msg[2:], payload.Bytes())
 
 	p.sendMessage(msg)
 }
