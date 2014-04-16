@@ -1,12 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"encoding/hex"
 	"flag"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"os/user"
+	"path"
 	"runtime/pprof"
+)
+
+var (
+	torrent_dir  string
+	torrent_file string
 )
 
 var (
@@ -20,14 +29,8 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	args := flag.Args()
-	narg := flag.NArg()
-	if narg != 1 {
-		if narg < 1 {
-			log.Println("Too few arguments. Torrent file or torrent URL required.")
-		} else {
-			log.Printf("Too many arguments. (Expected 1): %v", args)
-		}
+	if flag.NArg() != 0 {
+		log.Println("Don't want arguments")
 		usage()
 	}
 
@@ -52,26 +55,30 @@ func main() {
 
 	log.Println("Starting.")
 
+	user, err := user.Current()
+	if err != nil {
+		log.Fatal("Couldn't get current user: ", err)
+	}
+
+	torrent_dir = user.HomeDir + string(os.PathSeparator) + ".local/share/bitshare"
+	if _, err := os.Stat(torrent_dir); os.IsNotExist(err) {
+		err := os.MkdirAll(torrent_dir, os.ModeDir|0755)
+		if err != nil {
+			log.Fatal("Couldn't make home dir:", err)
+		}
+	}
+
+	torrent_file = torrent_dir + string(os.PathSeparator) + "current.torrent"
+
 	conChan, listenPort, err := listenForPeerConnections()
 	if err != nil {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
 	quitChan := listenSigInt()
 
-	torrent = args[0]
-	ts, err := NewTorrentSession(torrent, listenPort)
-	if err != nil {
-		log.Println("Could not create torrent session.", err)
-		return
-	}
+	fileModif := listenTorrentChanges()
+
 	torrentSessions := make(map[string]*TorrentSession)
-	torrentSessions[ts.m.InfoHash] = ts
-
-	log.Printf("Starting torrent session for %x", ts.m.InfoHash)
-
-	for _, ts := range torrentSessions {
-		go ts.DoTorrent()
-	}
 
 	lpd := &Announcer{}
 	if *useLPD {
@@ -106,6 +113,23 @@ mainLoop:
 				log.Printf("Received LPD announce for ih %s", announce.infohash)
 				ts.hintNewPeer(announce.peer)
 			}
+		case <-fileModif:
+			for _, ts := range torrentSessions {
+				err := ts.Quit()
+				if err != nil {
+					log.Println("Failed: ", err)
+				}
+			}
+
+			ts, err := NewTorrentSession(torrent_file, listenPort)
+			if err != nil {
+				log.Println("Could not create torrent session.", err)
+				return
+			}
+			log.Printf("Starting torrent session for %x", ts.m.InfoHash)
+			go ts.DoTorrent()
+
+			torrentSessions[ts.m.InfoHash] = ts
 		}
 	}
 
@@ -135,4 +159,38 @@ func startLPD(torrentSessions map[string]*TorrentSession, listenPort int) (lpd *
 		}
 	}
 	return
+}
+
+func listenTorrentChanges() (c chan bool) {
+	c = make(chan bool)
+
+	cmd := exec.Command("inotifywait",
+		"--monitor", "--recursive",
+		torrent_dir,
+		"--event", "modify",
+		"--event", "moved_to",
+		"--format", "%f")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	filename := path.Base(torrent_file)
+	go func() {
+		for scanner.Scan() {
+			if filename == scanner.Text() {
+				c <- true
+			}
+		}
+	}()
+
+	cmd.Start()
+
+	// Initialize at beginning
+	go func() {
+		c <- true
+	}()
+
+	return c
 }
