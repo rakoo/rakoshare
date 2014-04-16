@@ -161,8 +161,8 @@ func startLPD(torrentSessions map[string]*TorrentSession, listenPort int) (lpd *
 	return
 }
 
-func listenTorrentChanges() (c chan bool) {
-	c = make(chan bool)
+func listenTorrentChanges() (c chan struct{}) {
+	c = make(chan struct{})
 
 	cmd := exec.Command("inotifywait",
 		"--monitor", "--recursive",
@@ -180,7 +180,7 @@ func listenTorrentChanges() (c chan bool) {
 	go func() {
 		for scanner.Scan() {
 			if filename == scanner.Text() {
-				c <- true
+				c <- struct{}{}
 			}
 		}
 	}()
@@ -189,7 +189,7 @@ func listenTorrentChanges() (c chan bool) {
 
 	// Initialize at beginning
 	go func() {
-		c <- true
+		c <- struct{}{}
 	}()
 
 	return c
