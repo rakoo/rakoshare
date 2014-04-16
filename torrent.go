@@ -437,6 +437,7 @@ func (t *TorrentSession) DoTorrent() {
 	go t.deadlockDetector()
 	log.Println("Fetching torrent.")
 	rechokeChan := time.Tick(1 * time.Second)
+	verboseChan := time.Tick(10 * time.Second)
 	keepAliveChan := time.Tick(60 * time.Second)
 	var retrackerChan <-chan time.Time
 	if !t.trackerLessMode {
@@ -553,13 +554,6 @@ func (t *TorrentSession) DoTorrent() {
 		case <-rechokeChan:
 			// TODO: recalculate who to choke / unchoke
 			t.heartbeat <- true
-			ratio := float64(0.0)
-			if t.si.Downloaded > 0 {
-				ratio = float64(t.si.Uploaded) / float64(t.si.Downloaded)
-			}
-			log.Println("Peers:", len(t.peers), "downloaded:", t.si.Downloaded,
-				"uploaded:", t.si.Uploaded, "ratio", ratio)
-			log.Println("good, total", t.goodPieces, t.totalPieces)
 			if len(t.peers) < TARGET_NUM_PEERS && t.goodPieces < t.totalPieces {
 				if t.si.UseDHT {
 					go t.dht.PeersRequest(t.m.InfoHash, true)
@@ -570,6 +564,14 @@ func (t *TorrentSession) DoTorrent() {
 					}
 				}
 			}
+		case <-verboseChan:
+			ratio := float64(0.0)
+			if t.si.Downloaded > 0 {
+				ratio = float64(t.si.Uploaded) / float64(t.si.Downloaded)
+			}
+			log.Println("Peers:", len(t.peers), "downloaded:", t.si.Downloaded,
+				"uploaded:", t.si.Uploaded, "ratio", ratio)
+			log.Println("good, total", t.goodPieces, t.totalPieces)
 		case <-keepAliveChan:
 			now := time.Now()
 			for _, peer := range t.peers {
