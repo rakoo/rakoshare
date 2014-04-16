@@ -731,6 +731,11 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 				if !t.trackerLessMode {
 					t.fetchTrackerInfo("completed")
 				}
+				err := t.fileStore.Cleanup()
+				if err != nil {
+					log.Println("Couldn't cleanup correctly: ", err)
+				}
+
 				// TODO: Drop connections to all seeders.
 			}
 			for _, p := range t.peers {

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path"
 	"strings"
@@ -12,6 +13,13 @@ type FileStore interface {
 	io.ReaderAt
 	io.WriterAt
 	io.Closer
+
+	// Set all pieces from this one to be bad
+	SetBad(from int64)
+
+	// When downloading is finished, call Finish to move .part files to
+	// real files
+	Cleanup() error
 }
 
 type fileEntry struct {
@@ -25,9 +33,19 @@ type fileStore struct {
 }
 
 func (fe *fileEntry) open(name string, length int64) (err error) {
+	partname := name + ".part"
+	_, parterr := os.Stat(partname)
+	if parterr == nil {
+		parterr = os.Remove(partname)
+		if parterr != nil {
+			log.Printf("Couldn't remove part file: ", parterr)
+		}
+	}
+
 	fe.length = length
 	fe.name = name
 	st, err := os.Stat(name)
+
 	if err != nil && os.IsNotExist(err) {
 		f, err := os.Create(name)
 		defer f.Close()
@@ -47,6 +65,23 @@ func (fe *fileEntry) open(name string, length int64) (err error) {
 	return
 }
 
+func (fe *fileEntry) isPart() bool {
+	return strings.HasSuffix(fe.name, ".part")
+}
+
+func (fe *fileEntry) SetPart() {
+	if fe.isPart() {
+		return
+	}
+
+	err := copyfile(fe.name, fe.name+".part")
+	if err != nil {
+		log.Println("Error at copying to .part file: ", err)
+	}
+
+	fe.name = fe.name + ".part"
+}
+
 func (fe *fileEntry) ReadAt(p []byte, off int64) (n int, err error) {
 	file, err := os.OpenFile(fe.name, os.O_RDWR, 0600)
 	if err != nil {
@@ -63,6 +98,24 @@ func (fe *fileEntry) WriteAt(p []byte, off int64) (n int, err error) {
 	}
 	defer file.Close()
 	return file.WriteAt(p, off)
+}
+
+func (fe *fileEntry) Cleanup() (err error) {
+	if fe.isPart() {
+		realname := strings.Replace(fe.name, ".part", "", 1)
+		err = copyfile(fe.name, realname)
+		if err != nil {
+			log.Printf("Couldn't copy to real file: ", err)
+		}
+
+		err = os.Remove(fe.name)
+		if err != nil {
+			log.Printf("Couldn't remove part file: ", err)
+		}
+		fe.name = realname
+	}
+
+	return
 }
 
 func ensureDirectory(fullPath string) (err error) {
@@ -197,6 +250,47 @@ func (f *fileStore) WriteAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
+func (f *fileStore) SetBad(from int64) {
+	index := f.find(from)
+	for index < len(f.offsets) {
+		entry := &f.files[index]
+		entry.SetPart()
+		index++
+	}
+}
+
+func (f *fileStore) Cleanup() (err error) {
+	for _, fe := range f.files {
+		err = fe.Cleanup()
+	}
+
+	return
+}
+
 func (f *fileStore) Close() (err error) {
+	return
+}
+
+func copyfile(fromname, toname string) (err error) {
+	from, err := os.Open(fromname)
+	if err != nil {
+		log.Printf("Couldn't open %s for read: %s", fromname, err)
+		return err
+	}
+	defer from.Close()
+
+	to, err := os.Create(toname)
+	if err != nil {
+		log.Printf("Couldn't open %s for write: %s", toname, err)
+		return err
+	}
+	defer to.Close()
+
+	_, err = io.Copy(to, from)
+	if err != nil {
+		log.Printf("Couldn't copy to part: %s", err)
+		return err
+	}
+
 	return
 }

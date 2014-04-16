@@ -28,6 +28,7 @@ func checkPieces(fs FileStore, totalLength int64, m *MetaInfo) (good, bad int, g
 			good++
 			goodBits.Set(int(i))
 		} else {
+			fs.SetBad(int64(i) * pieceLength)
 			bad++
 		}
 	}
