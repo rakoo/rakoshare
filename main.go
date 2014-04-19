@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"encoding/hex"
 	"flag"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"os/user"
-	"path"
 	"runtime/pprof"
 )
 
@@ -76,7 +73,7 @@ func main() {
 	}
 	quitChan := listenSigInt()
 
-	fileModif := listenTorrentChanges()
+	couchdb := NewDB()
 
 	torrentSessions := make(map[string]*TorrentSession)
 
@@ -113,23 +110,24 @@ mainLoop:
 				log.Printf("Received LPD announce for ih %s", announce.infohash)
 				ts.hintNewPeer(announce.peer)
 			}
-		case <-fileModif:
-			for _, ts := range torrentSessions {
-				err := ts.Quit()
-				if err != nil {
-					log.Println("Failed: ", err)
-				}
-			}
-
-			ts, err := NewTorrentSession(torrent_file, listenPort)
-			if err != nil {
-				log.Println("Could not create torrent session.", err)
-				return
-			}
-			log.Printf("Starting torrent session for %x", ts.m.InfoHash)
-			go ts.DoTorrent()
-
-			torrentSessions[ts.m.InfoHash] = ts
+		case <-couchdb.newTorrent:
+			log.Println("new torrent")
+			//			for _, ts := range torrentSessions {
+			//				err := ts.Quit()
+			//				if err != nil {
+			//					log.Println("Failed: ", err)
+			//				}
+			//			}
+			//
+			//			ts, err := NewTorrentSession(torrent_file, listenPort)
+			//			if err != nil {
+			//				log.Println("Could not create torrent session.", err)
+			//				return
+			//			}
+			//			log.Printf("Starting torrent session for %x", ts.m.InfoHash)
+			//			go ts.DoTorrent()
+			//
+			//			torrentSessions[ts.m.InfoHash] = ts
 		}
 	}
 
@@ -159,38 +157,4 @@ func startLPD(torrentSessions map[string]*TorrentSession, listenPort int) (lpd *
 		}
 	}
 	return
-}
-
-func listenTorrentChanges() (c chan struct{}) {
-	c = make(chan struct{})
-
-	cmd := exec.Command("inotifywait",
-		"--monitor", "--recursive",
-		torrent_dir,
-		"--event", "modify",
-		"--event", "moved_to",
-		"--format", "%f")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	scanner := bufio.NewScanner(stdout)
-	filename := path.Base(torrent_file)
-	go func() {
-		for scanner.Scan() {
-			if filename == scanner.Text() {
-				c <- struct{}{}
-			}
-		}
-	}()
-
-	cmd.Start()
-
-	// Initialize at beginning
-	go func() {
-		c <- struct{}{}
-	}()
-
-	return c
 }
