@@ -1,13 +1,13 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"sync"
 	"time"
@@ -19,51 +19,79 @@ var (
 
 type Watcher struct {
 	lastModTime time.Time
-	torrentFile string
+	bitshareDir string
 	watchedDir  string
 	lock        sync.Mutex
 
-	NewTorrent chan []byte
+	PingNewTorrent chan string
 }
 
-func NewWatcher(dir string) (w *Watcher) {
-	u, err := user.Current()
-	if err != nil {
-		log.Fatal("Couldn't watch dir: ", err)
-	}
+func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 
-	relpath := []string{".local", "share", "bitshare", "current.torrent"}
-	torrentFile := u.HomeDir + string(os.PathSeparator) + filepath.Join(relpath...)
+	// Lastmodtime
+	// If we have a current torrent, it's its mod time
+	// Otherwise it's time.Now()
+	defaultNow := time.Now()
+	lastModTime := defaultNow
 
-	lastModTime := time.Now()
-
-	st, err := os.Stat(torrentFile)
+	currentFile := filepath.Join(bitshareDir, "current")
+	st, err := os.Stat(currentFile)
 	if err != nil && !os.IsNotExist(err) {
-		log.Fatal("Couldn't stat file: ", err)
+		log.Fatal("Couldn't stat current file: ", err)
 	}
 	if st != nil {
-		lastModTime = st.ModTime()
+		current, err := ioutil.ReadFile(currentFile)
+		if err == nil {
+			currentTorrent := filepath.Join(bitshareDir, string(current))
+			st2, err := os.Stat(currentTorrent)
+			if err == nil {
+				lastModTime = st2.ModTime()
+			}
+		}
 	}
 
 	w = &Watcher{
-		lastModTime: lastModTime,
-		torrentFile: torrentFile,
-		watchedDir:  dir,
-		NewTorrent:  make(chan []byte),
+		lastModTime:    lastModTime,
+		bitshareDir:    bitshareDir,
+		watchedDir:     watchedDir,
+		PingNewTorrent: make(chan string),
 	}
 	go w.watch()
 
-	if w.lastModTime.Before(time.Now()) {
-		content, err := ioutil.ReadFile(w.torrentFile)
-		if err != nil {
-			log.Fatal(err)
-		}
+	// Initialization
+	var ih string
 
-		go func() {
-			w.NewTorrent <- content
-		}()
+	if w.lastModTime.Before(defaultNow) {
+		ih, err = currentTorrent(w.bitshareDir)
+		if err != nil {
+			log.Fatal("Couldn't get current infohash: ", err)
+		}
+	} else {
+		ih = w.torrentify()
+	}
+	go func() {
+		w.PingNewTorrent <- ih
+	}()
+
+	return
+}
+
+func currentTorrent(dir string) (ih string, err error) {
+	currentFile := filepath.Join(dir, "current")
+	st, err := os.Stat(currentFile)
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatal("Couldn't stat current file: ", err)
+	}
+	if st == nil {
+		return
 	}
 
+	ihbytes, err := ioutil.ReadFile(currentFile)
+	if err != nil {
+		return
+	}
+	ih1, err := hex.DecodeString(string(ihbytes))
+	ih = string(ih1)
 	return
 }
 
@@ -99,35 +127,85 @@ func (w *Watcher) watch() {
 			// New torrent: block until we completely manage it. We will take
 			// care of other changes in the next run of the loop.
 
-			w.NewTorrent <- w.torrentify()
+			w.PingNewTorrent <- w.torrentify()
 		} else {
 			log.Println("Error while walking dir:", err)
 		}
 	}
 }
 
-func (w *Watcher) torrentify() (content []byte) {
+func (w *Watcher) torrentify() (ih string) {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
+	tmpFile, err := ioutil.TempFile(w.bitshareDir, "current.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		err = os.Remove(tmpFile.Name())
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	err = tmpFile.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	cmd := exec.Command("transmission-create",
-		"-o", w.torrentFile,
+		"-o", tmpFile.Name(),
 		w.watchedDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Run()
-
-	st, err := os.Stat(w.torrentFile)
+	err = cmd.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// If resulting file is empty, we have an empty fileDir. Torrents
+	// will come from CouchDB.
+	st1, err := os.Stat(tmpFile.Name())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if st1.Size() == 0 {
+		return
+	}
+
+	// Get infohash
+	m, err := NewMetaInfo(tmpFile.Name())
+	if err != nil {
+		log.Fatal(err)
+	}
+	ih = m.InfoHash
+	ihhex := fmt.Sprintf("%x", ih)
+
+	// Move tmp file to final file (with infohash as name)
+	currentTorrent := filepath.Join(w.bitshareDir, ihhex)
+	if st, err := os.Stat(currentTorrent); st != nil {
+		if err = os.Remove(currentTorrent); err != nil {
+			log.Fatal(err)
+		}
+	}
+	err = os.Link(tmpFile.Name(), currentTorrent)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Overwrite "current" file with current value
+	currentFile, err := os.Create(filepath.Join(w.bitshareDir, "current"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer currentFile.Close()
+	currentFile.WriteString(ihhex)
+
+	// Update last mod time
+	st, err := os.Stat(currentTorrent)
+	if err != nil {
+		log.Fatal(err)
+	}
 	w.lastModTime = st.ModTime()
-
-	content, err = ioutil.ReadFile(w.torrentFile)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	return
 }

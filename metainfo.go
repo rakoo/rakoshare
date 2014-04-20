@@ -1,46 +1,47 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	bencode "code.google.com/p/bencode-go"
 	"github.com/nictuku/dht"
+	"github.com/zeebo/bencode"
 )
 
 type FileDict struct {
-	Length int64
-	Path   []string
-	Md5sum string
+	Length int64    `bencode:"length"`
+	Path   []string `bencode:"path"`
+	Md5sum string   `bencode:"md5sum,omitempty"`
 }
 
 type InfoDict struct {
-	PieceLength int64 "piece length"
-	Pieces      string
-	Private     int64
-	Name        string
+	PieceLength int64  `bencode:"piece length"`
+	Pieces      string `bencode:"pieces"`
+	Private     int64  `bencode:"private"`
+	Name        string `bencode:"name"`
 	// Single File Mode
-	Length int64
-	Md5sum string
+	Length int64  `bencode:"length,omitempty"`
+	Md5sum string `bencode:"md5sum,omitempty"`
 	// Multiple File mode
-	Files []FileDict
+	Files []FileDict `bencode:"files,omitempty"`
 }
 
 type MetaInfo struct {
-	Info         InfoDict
-	InfoHash     string
-	Announce     string
-	AnnounceList [][]string "announce-list"
-	CreationDate string     "creation date"
-	Comment      string
-	CreatedBy    string "created by"
-	Encoding     string
+	Info         InfoDict   `bencode:"info"`
+	InfoHash     string     `bencode:"-"`
+	Announce     string     `bencode:"announce,omitempty"`
+	AnnounceList [][]string `bencode:"announce-list,omitempty"`
+	CreationDate int64      `bencode:"creation date,omitempty"`
+	Comment      string     `bencode:"comment,omitempty"`
+	CreatedBy    string     `bencode:"created by,omitempty"`
+	Encoding     string     `bencode:"encoding,omitempty"`
 }
 
 func NewMetaInfo(torrent string) (m *MetaInfo, err error) {
@@ -80,14 +81,14 @@ func NewMetaInfoFromFile(torrent string) (m *MetaInfo, err error) {
 func NewMetaInfoFromContent(content []byte) (m *MetaInfo, err error) {
 
 	var m1 MetaInfo
-	err1 := bencode.Unmarshal(bytes.NewReader(content), &m1)
+	err1 := bencode.DecodeString(string(content), &m1)
 	if err1 != nil {
-		err = errors.New("Couldn't parse torrent file: " + err.Error())
+		err = errors.New("Couldn't parse torrent file: " + err1.Error())
 		return
 	}
 
 	hash := sha1.New()
-	err1 = bencode.Marshal(hash, m1.Info)
+	err1 = bencode.NewEncoder(hash).Encode(m1.Info)
 	if err1 != nil {
 		return
 	}
@@ -112,6 +113,18 @@ func NewMetaInfoFromMagnet(torrent string) (m *MetaInfo, err error) {
 	m = &MetaInfo{InfoHash: string(ih)}
 	return
 
+}
+
+func (m *MetaInfo) saveToDisk(dir string) (err error) {
+	ihhex := fmt.Sprintf("%x", m.InfoHash)
+	f, err := os.Create(filepath.Join(dir, ihhex))
+	if err != nil {
+		log.Println("Error when opening file for creation: ", err)
+		return
+	}
+	defer f.Close()
+
+	return bencode.NewEncoder(f).Encode(m)
 }
 
 func getMetaInfo(torrent string) (metaInfo *MetaInfo, err error) {
@@ -164,30 +177,11 @@ func getTrackerInfo(url string) (tr *TrackerResponse, err error) {
 		return
 	}
 	var tr2 TrackerResponse
-	err = bencode.Unmarshal(r.Body, &tr2)
+	err = bencode.NewDecoder(r.Body).Decode(&tr2)
 	r.Body.Close()
 	if err != nil {
 		return
 	}
 	tr = &tr2
-	return
-}
-
-func saveMetaInfo(metadata string) (err error) {
-	var info InfoDict
-	err = bencode.Unmarshal(bytes.NewReader([]byte(metadata)), &info)
-	if err != nil {
-		return
-	}
-
-	f, err := os.Create(info.Name + ".torrent")
-	if err != nil {
-		log.Println("Error when opening file for creation: ", err)
-		return
-	}
-	defer f.Close()
-
-	_, err = f.WriteString(metadata)
-
 	return
 }

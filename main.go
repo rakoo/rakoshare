@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -47,17 +48,25 @@ func main() {
 		}(*memprofile)
 	}
 
+	// Bitshare dir
+	u, err := user.Current()
+	if err != nil {
+		log.Fatal("Couldn't watch dir: ", err)
+	}
+	pathArgs := []string{u.HomeDir, ".local", "share", "bitshare"}
+	bitshareDir := filepath.Join(pathArgs...)
+
 	// Watcher
 	if fileDir == "." {
 		fmt.Println("fileDir option is missing")
 		flag.Usage()
 	}
-	_, err := os.Stat(fileDir)
+	_, err = os.Stat(fileDir)
 	if err != nil {
 		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
 		os.Exit(1)
 	}
-	watcher := NewWatcher(filepath.Clean(fileDir))
+	watcher := NewWatcher(bitshareDir, filepath.Clean(fileDir))
 
 	log.Println("Starting.")
 
@@ -123,29 +132,65 @@ mainLoop:
 				log.Printf("Received LPD announce for ih %s", announce.infohash)
 				ts.hintNewPeer(announce.peer)
 			}
-		case <-couchdb.newTorrent:
-			log.Println("new torrent")
-			//			for _, ts := range torrentSessions {
-			//				err := ts.Quit()
-			//				if err != nil {
-			//					log.Println("Failed: ", err)
-			//				}
-			//			}
-			//
-			//			ts, err := NewTorrentSession(torrentFile, listenPort)
-			//			if err != nil {
-			//				log.Println("Could not create torrent session.", err)
-			//				return
-			//			}
-			//			log.Printf("Starting torrent session for %x", ts.m.InfoHash)
-			//			go ts.DoTorrent()
-			//
-			//			torrentSessions[ts.m.InfoHash] = ts
-		case content := <-watcher.NewTorrent:
-			log.Println("New torrent from watcher:", len(content))
+		case magnet := <-couchdb.newTorrent:
+			log.Println("new torrent:", magnet)
+
+			ts, err := startSession(magnet, torrentSessions, listenPort)
+			if err != nil {
+				log.Fatal("Couldn't start new session: ", err)
+			}
+
+			go func() {
+				for meta := range ts.NewTorrent {
+					meta.saveToDisk(bitshareDir)
+
+					currentFile := filepath.Join(bitshareDir, "current")
+					ihhex := fmt.Sprintf("%x", meta.InfoHash)
+					ioutil.WriteFile(currentFile, []byte(ihhex), 0600)
+				}
+			}()
+
+			torrentSessions[ts.m.InfoHash] = ts
+		case ih := <-watcher.PingNewTorrent:
+			couchdb.PushNewTorrent(ih)
+
+			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
+			startSession(torrentFile, torrentSessions, listenPort)
 		}
 	}
 
+}
+
+func startSession(torrent string, torrentSessions map[string]*TorrentSession, listenPort int) (ts *TorrentSession, err error) {
+
+	meta, err := NewMetaInfo(torrent)
+	if err != nil {
+		return
+	}
+	if ts, ok := torrentSessions[meta.InfoHash]; ok {
+		return ts, nil
+	}
+
+	for idx, ts := range torrentSessions {
+		err := ts.Quit()
+		if err != nil {
+			log.Println("Failed: ", err)
+		}
+
+		delete(torrentSessions, idx)
+	}
+
+	ts, err = NewTorrentSession(torrent, listenPort)
+	if err != nil {
+		log.Println("Could not create torrent session.", err)
+		return
+	}
+	log.Printf("Starting torrent session for %x", ts.m.InfoHash)
+	go ts.DoTorrent()
+
+	torrentSessions[ts.m.InfoHash] = ts
+
+	return
 }
 
 func usage() {

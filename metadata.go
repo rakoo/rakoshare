@@ -72,10 +72,6 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 		}
 
 		metadata := string(b)
-		err = saveMetaInfo(metadata)
-		if err != nil {
-			return
-		}
 		t.reload(metadata)
 	case METADATA_REJECT:
 		log.Printf("%d didn't want to send piece %d\n", p.address, message.Piece)
