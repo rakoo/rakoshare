@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"runtime/pprof"
 )
 
@@ -44,6 +46,18 @@ func main() {
 			pprof.WriteHeapProfile(memf)
 		}(*memprofile)
 	}
+
+	// Watcher
+	if fileDir == "." {
+		fmt.Println("fileDir option is missing")
+		flag.Usage()
+	}
+	_, err := os.Stat(fileDir)
+	if err != nil {
+		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
+		os.Exit(1)
+	}
+	watcher := NewWatcher(filepath.Clean(fileDir))
 
 	log.Println("Starting.")
 
@@ -127,6 +141,8 @@ mainLoop:
 			//			go ts.DoTorrent()
 			//
 			//			torrentSessions[ts.m.InfoHash] = ts
+		case content := <-watcher.NewTorrent:
+			log.Println("New torrent from watcher:", len(content))
 		}
 	}
 
