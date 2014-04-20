@@ -2,12 +2,14 @@ package main
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
-	_ "io"
 	"net/url"
 	"strings"
+)
 
-	_ "github.com/nictuku/dht"
+var (
+	errNoBtih = errors.New("Magnet URI xt parameter missing the 'urn:btih:' prefix. Not a bittorrent hash link?")
 )
 
 type Magnet struct {
@@ -15,7 +17,7 @@ type Magnet struct {
 	Names      []string
 }
 
-func parseMagnet(s string) (Magnet, error) {
+func parseMagnet(s string) (mag Magnet, err error) {
 	// References:
 	// - http://bittorrent.org/beps/bep_0009.html
 	// - http://en.wikipedia.org/wiki/Magnet_URI_scheme
@@ -31,23 +33,30 @@ func parseMagnet(s string) (Magnet, error) {
 	// tr: address tracker (optional).
 	u, err := url.Parse(s)
 	if err != nil {
-		return Magnet{}, err
+		return
 	}
 	xts, ok := u.Query()["xt"]
 	if !ok {
-		return Magnet{}, fmt.Errorf("Magnet URI missing the 'xt' argument: " + s)
+		err = errors.New(fmt.Sprintf("Magnet URI missing the 'xt' argument" + s))
+		return
 	}
+
 	infoHashes := make([]string, 0, len(xts))
 	for _, xt := range xts {
 		s := strings.Split(xt, "urn:btih:")
 		if len(s) != 2 {
-			return Magnet{}, fmt.Errorf("Magnet URI xt parameter missing the 'urn:btih:' prefix. Not a bittorrent hash link?")
+			err = errNoBtih
+			return
 		}
+
 		ih := s[1]
+
 		// TODO: support base32 encoded hashes, if they still exist.
 		if len(ih) != sha1.Size*2 { // hex format.
-			return Magnet{}, fmt.Errorf("Magnet URI contains infohash with unexpected length. Wanted %d, got %d: %v", sha1.Size, len(ih), ih)
+			err = errors.New(fmt.Sprintf("Magnet URI contains infohash with unexpected length. Wanted %d, got %d: %v", sha1.Size, len(ih), ih))
+			return
 		}
+
 		infoHashes = append(infoHashes, s[1])
 	}
 
@@ -57,5 +66,10 @@ func parseMagnet(s string) (Magnet, error) {
 		names = n
 	}
 
-	return Magnet{InfoHashes: infoHashes, Names: names}, nil
+	mag = Magnet{
+		InfoHashes: infoHashes,
+		Names:      names,
+	}
+
+	return
 }

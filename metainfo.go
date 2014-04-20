@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -44,112 +43,79 @@ type MetaInfo struct {
 	Encoding     string
 }
 
-func getString(m map[string]interface{}, k string) string {
-	if v, ok := m[k]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
+func NewMetaInfo(torrent string) (m *MetaInfo, err error) {
+	if strings.HasPrefix(torrent, "http:") {
+		return NewMetaInfoFromHTTP(torrent)
+	} else if strings.HasPrefix(torrent, "magnet:") {
+		return NewMetaInfoFromMagnet(torrent)
+	} else {
+		return NewMetaInfoFromFile(torrent)
 	}
-	return ""
 }
 
-// Parse a list of list of strings structure, filtering out anything that's
-// not a string, and filtering out empty lists. May return nil.
-func getSliceSliceString(m map[string]interface{}, k string) (aas [][]string) {
-	if a, ok := m[k]; ok {
-		if b, ok := a.([]interface{}); ok {
-			for _, c := range b {
-				if d, ok := c.([]interface{}); ok {
-					var sliceOfStrings []string
-					for _, e := range d {
-						if f, ok := e.(string); ok {
-							sliceOfStrings = append(sliceOfStrings, f)
-						}
-					}
-					if len(sliceOfStrings) > 0 {
-						aas = append(aas, sliceOfStrings)
-					}
-				}
-			}
-		}
+func NewMetaInfoFromHTTP(torrent string) (m *MetaInfo, err error) {
+	r, err := proxyHttpGet(torrent)
+	if err != nil {
+		return nil, err
 	}
+	defer r.Body.Close()
+
+	content, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+
+	return NewMetaInfoFromContent(content)
+}
+
+func NewMetaInfoFromFile(torrent string) (m *MetaInfo, err error) {
+	content, err := ioutil.ReadFile(torrent)
+	if err != nil {
+		return
+	}
+
+	return NewMetaInfoFromContent(content)
+}
+
+func NewMetaInfoFromContent(content []byte) (m *MetaInfo, err error) {
+
+	var m1 MetaInfo
+	err1 := bencode.Unmarshal(bytes.NewReader(content), &m1)
+	if err1 != nil {
+		err = errors.New("Couldn't parse torrent file: " + err.Error())
+		return
+	}
+
+	hash := sha1.New()
+	err1 = bencode.Marshal(hash, m1.Info)
+	if err1 != nil {
+		return
+	}
+
+	m1.InfoHash = string(hash.Sum(nil))
+
+	return &m1, nil
+}
+
+func NewMetaInfoFromMagnet(torrent string) (m *MetaInfo, err error) {
+	magnet, err := parseMagnet(torrent)
+	if err != nil {
+		log.Println("Couldn't parse magnet: ", err)
+		return
+	}
+
+	ih, err := dht.DecodeInfoHash(magnet.InfoHashes[0])
+	if err != nil {
+		return
+	}
+
+	m = &MetaInfo{InfoHash: string(ih)}
 	return
+
 }
 
 func getMetaInfo(torrent string) (metaInfo *MetaInfo, err error) {
-	var input io.ReadCloser
-	if strings.HasPrefix(torrent, "http:") {
-		r, err := proxyHttpGet(torrent)
-		if err != nil {
-			return nil, err
-		}
-		input = r.Body
-	} else if strings.HasPrefix(torrent, "magnet:") {
-		magnet, err := parseMagnet(torrent)
-		if err != nil {
-			log.Println("Couldn't parse magnet: ", err)
-			return nil, err
-		}
-
-		ih, err := dht.DecodeInfoHash(magnet.InfoHashes[0])
-		if err != nil {
-			return nil, err
-		}
-
-		metaInfo = &MetaInfo{InfoHash: string(ih)}
-		return metaInfo, err
-
-	} else {
-		if input, err = os.Open(torrent); err != nil {
-			return
-		}
-	}
-
-	// We need to calcuate the sha1 of the Info map, including every value in the
-	// map. The easiest way to do this is to read the data using the Decode
-	// API, and then pick through it manually.
-	var m interface{}
-	m, err = bencode.Decode(input)
-	input.Close()
-	if err != nil {
-		err = errors.New("Couldn't parse torrent file phase 1: " + err.Error())
-		return
-	}
-
-	topMap, ok := m.(map[string]interface{})
-	if !ok {
-		err = errors.New("Couldn't parse torrent file phase 2.")
-		return
-	}
-
-	infoMap, ok := topMap["info"]
-	if !ok {
-		err = errors.New("Couldn't parse torrent file. info")
-		return
-	}
-	var b bytes.Buffer
-	if err = bencode.Marshal(&b, infoMap); err != nil {
-		return
-	}
-	hash := sha1.New()
-	hash.Write(b.Bytes())
-
-	var m2 MetaInfo
-	err = bencode.Unmarshal(&b, &m2.Info)
-	if err != nil {
-		return
-	}
-
-	m2.InfoHash = string(hash.Sum(nil))
-	m2.Announce = getString(topMap, "announce")
-	m2.AnnounceList = getSliceSliceString(topMap, "announce-list")
-	m2.CreationDate = getString(topMap, "creation date")
-	m2.Comment = getString(topMap, "comment")
-	m2.CreatedBy = getString(topMap, "created by")
-	m2.Encoding = getString(topMap, "encoding")
-
-	metaInfo = &m2
-	return
+	return NewMetaInfo(torrent)
 }
 
 type TrackerResponse struct {

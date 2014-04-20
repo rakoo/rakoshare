@@ -11,11 +11,6 @@ import (
 )
 
 var (
-	torrent_dir  string
-	torrent_file string
-)
-
-var (
 	cpuprofile = flag.String("cpuprofile", "", "If not empty, collects CPU profile samples and writes the profile to the given file before the program exits")
 	memprofile = flag.String("memprofile", "", "If not empty, writes memory heap allocations to the given file before the program exits")
 )
@@ -52,31 +47,35 @@ func main() {
 
 	log.Println("Starting.")
 
+	torrentSessions := make(map[string]*TorrentSession)
+
+	// torrentDir and torrentFile
 	user, err := user.Current()
 	if err != nil {
 		log.Fatal("Couldn't get current user: ", err)
 	}
-
-	torrent_dir = user.HomeDir + string(os.PathSeparator) + ".local/share/bitshare"
-	if _, err := os.Stat(torrent_dir); os.IsNotExist(err) {
-		err := os.MkdirAll(torrent_dir, os.ModeDir|0755)
+	torrentDir := filepath.Join(user.HomeDir, ".local", "share", "bitshare")
+	if _, err := os.Stat(torrentDir); os.IsNotExist(err) {
+		err := os.MkdirAll(torrentDir, os.ModeDir|0755)
 		if err != nil {
 			log.Fatal("Couldn't make home dir:", err)
 		}
 	}
+	//torrentFile := filepath.Join(torrentDir, "current.torrent")
 
-	torrent_file = torrent_dir + string(os.PathSeparator) + "current.torrent"
-
+	// External listener
 	conChan, listenPort, err := listenForPeerConnections()
 	if err != nil {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
+
+	// quitChan
 	quitChan := listenSigInt()
 
+	// DB for synchronisation
 	couchdb := NewDB()
 
-	torrentSessions := make(map[string]*TorrentSession)
-
+	// LPD
 	lpd := &Announcer{}
 	if *useLPD {
 		lpd = startLPD(torrentSessions, listenPort)
@@ -119,7 +118,7 @@ mainLoop:
 			//				}
 			//			}
 			//
-			//			ts, err := NewTorrentSession(torrent_file, listenPort)
+			//			ts, err := NewTorrentSession(torrentFile, listenPort)
 			//			if err != nil {
 			//				log.Println("Could not create torrent session.", err)
 			//				return
