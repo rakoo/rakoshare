@@ -15,18 +15,26 @@ const (
 	COUCH_URL = `http://localhost:5984/bitshare`
 )
 
+type changesline struct {
+	Doc *dbdoc `json:"doc"`
+}
+
 type dbdoc struct {
-	Id     string `json:"id"`
+	Id     string `json:"_id"`
+	Rev    string `json:"_rev,omitempty"`
 	Magnet string `json:"magnet"`
 }
 
 type DB struct {
-	newTorrent chan struct{}
+	newTorrent chan string
+
+	lastRev    string
+	lastMagnet string
 }
 
-func NewDB() (db DB) {
-	db = DB{
-		newTorrent: make(chan struct{}),
+func NewDB() (db *DB) {
+	db = &DB{
+		newTorrent: make(chan string),
 	}
 	err := db.Connect()
 	if err != nil {
@@ -36,7 +44,7 @@ func NewDB() (db DB) {
 	return db
 }
 
-func (db DB) Connect() (err error) {
+func (db *DB) Connect() (err error) {
 	existResp, err := http.Head(COUCH_URL)
 	if err != nil {
 		return
@@ -61,16 +69,64 @@ func (db DB) Connect() (err error) {
 		return errors.New(fmt.Sprintf("Couldn't connect to db: %s", existResp.Status))
 	}
 
+	docresp, err := http.Get(COUCH_URL + "/current")
+	if err != nil {
+		log.Println("Error when heading current version:", err)
+		return
+	}
+	if docresp.StatusCode != 200 && docresp.StatusCode != 404 {
+		log.Println("Error when heading current version:", docresp.Status)
+		return
+	}
+	defer docresp.Body.Close()
+
+	var jsdoc dbdoc
+	err = json.NewDecoder(docresp.Body).Decode(&jsdoc)
+	if err != nil {
+		log.Println("Couldn't unmarshal current doc: ", err)
+		return
+	}
+	db.lastRev = jsdoc.Rev
+	db.lastMagnet = jsdoc.Magnet
+
 	go db.listenTorrentChanges()
 
 	return
 }
 
-func (db DB) putNewTorrent(ih string) (err error) {
+func (db *DB) PushNewTorrent(ih string) (err error) {
+	doc := dbdoc{
+		Id:     "current",
+		Magnet: fmt.Sprintf("magnet:?xt=urn:btih:%x", ih),
+		Rev:    db.lastRev,
+	}
+
+	if doc.Magnet == db.lastMagnet {
+		return
+	}
+
+	var buf bytes.Buffer
+	err = json.NewEncoder(&buf).Encode(doc)
+	if err != nil {
+		log.Println("Couldn't encode doc:", err)
+		return
+	}
+
+	putReq, err := http.NewRequest("PUT", COUCH_URL+"/current", &buf)
+	if err != nil {
+		log.Println("Couldn't PUT to couchdb:", err)
+		return
+	}
+
+	putResp, err := http.DefaultClient.Do(putReq)
+	if putResp.StatusCode != 200 && putResp.StatusCode != 201 {
+		log.Println("Error when putting doc:", putResp.Status)
+	}
+
 	return
 }
 
-func (db DB) listenTorrentChanges() (err error) {
+func (db *DB) listenTorrentChanges() (err error) {
 	url := COUCH_URL + "/_changes?since=now&feed=continuous&include_docs=true"
 	changesResp, err := http.Get(url)
 	if err != nil {
@@ -80,15 +136,15 @@ func (db DB) listenTorrentChanges() (err error) {
 
 	rd := newLiner(changesResp.Body)
 	for line := range rd.Lines() {
-		var doc dbdoc
-		err := json.Unmarshal(line, &doc)
+		var change changesline
+		err := json.Unmarshal(line, &change)
 		if err != nil {
 			log.Println("Couldn't decode into document:", err)
 			continue
 		}
 
-		if doc.Id != "" {
-			db.newTorrent <- struct{}{}
+		if change.Doc != nil && change.Doc.Id != "" {
+			db.newTorrent <- change.Doc.Magnet
 		}
 	}
 
