@@ -1,17 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zeebo/bencode"
 )
 
 var (
@@ -107,21 +112,11 @@ func (w *Watcher) watch() {
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
 
-		err := filepath.Walk(w.watchedDir, func(path string, info os.FileInfo, perr error) (err error) {
-			if !info.Mode().IsRegular() {
-				return
-			}
-
-			// Torrents can't have empty files
-			if info.Size() == 0 {
-				return
-			}
-
+		err := torrentWalk(w.watchedDir, func(path string, info os.FileInfo, perr error) (err error) {
 			if info.ModTime().After(w.lastModTime) {
 				fmt.Printf("[newer] %s\n", path)
 				return errNewFile
 			}
-
 			return
 		})
 
@@ -162,13 +157,20 @@ func (w *Watcher) torrentify() (ih string) {
 		log.Fatal(err)
 	}
 
-	cmd := exec.Command("transmission-create",
-		"-o", tmpFile.Name(),
-		w.watchedDir)
-	err = cmd.Run()
+	meta, err := createMeta(w.watchedDir)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	f, err := os.Create(tmpFile.Name())
+	if err != nil {
+		log.Fatal("Couldn't create out file: ", err)
+	}
+	err = bencode.NewEncoder(f).Encode(meta)
+	if err != nil {
+		log.Fatal("Couldn't create torrent: ", err)
+	}
+	f.Close()
 
 	// If resulting file is empty, we have an empty fileDir. Torrents
 	// will come from CouchDB.
@@ -218,6 +220,124 @@ func (w *Watcher) torrentify() (ih string) {
 	return
 }
 
+func createMeta(dir string) (meta *MetaInfo, err error) {
+	blockSize := int64(1 << 20) // 1MiB
+
+	fileDicts := make([]*FileDict, 0)
+
+	hasher := NewBlockHasher(blockSize)
+	err = torrentWalk(dir, func(path string, info os.FileInfo, perr error) (err error) {
+		f, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("Couldn't open %s for hashing: %s\n", path, err)
+		}
+		defer f.Close()
+
+		_, err = io.Copy(hasher, f)
+		if err != nil {
+			log.Fatalf("Couldn't hash %s: %s\n", path, err)
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return
+		}
+
+		fileDict := &FileDict{
+			Length: info.Size(),
+			Path:   strings.Split(relPath, string(os.PathSeparator)),
+		}
+		fileDicts = append(fileDicts, fileDict)
+
+		return
+	})
+	if err != nil {
+		return
+	}
+
+	end := hasher.Close()
+	if end != nil {
+		log.Fatal("Couldn't hash files correctly: ", err)
+	}
+
+	meta = &MetaInfo{
+		Info: &InfoDict{
+			Pieces:      string(hasher.Pieces),
+			PieceLength: blockSize,
+			Private:     0,
+			Name:        filepath.Base(dir),
+			Files:       fileDicts,
+		},
+	}
+
+	hash := sha1.New()
+	err = bencode.NewEncoder(hash).Encode(meta.Info)
+	if err != nil {
+		return
+	}
+	meta.InfoHash = string(hash.Sum(nil))
+
+	return
+}
+
+type BlockHasher struct {
+	sha1er    hash.Hash
+	left      int64
+	blockSize int64
+	Pieces    []byte
+}
+
+func NewBlockHasher(blockSize int64) (h *BlockHasher) {
+	return &BlockHasher{
+		blockSize: blockSize,
+		sha1er:    sha1.New(),
+		left:      blockSize,
+	}
+}
+
+// You shouldn't use this one
+func (h *BlockHasher) Write(p []byte) (n int, err error) {
+	n2, err := h.ReadFrom(bytes.NewReader(p))
+	return int(n2), err
+}
+
+func (h *BlockHasher) ReadFrom(rd io.Reader) (n int64, err error) {
+	var stop bool
+
+	for {
+		if h.left > 0 {
+			thisN, err := io.CopyN(h.sha1er, rd, h.left)
+			if err != nil {
+				if err == io.EOF {
+					stop = true
+				} else {
+					log.Fatal("Error when sha1-ing: ", err)
+				}
+			}
+			h.left -= thisN
+			n += thisN
+		}
+		if h.left == 0 {
+			h.Pieces = h.sha1er.Sum(h.Pieces)
+			h.sha1er = sha1.New()
+			h.left = h.blockSize
+		}
+
+		if stop {
+			break
+		}
+	}
+
+	return
+}
+
+func (h *BlockHasher) Close() (err error) {
+	if h.left > 0 {
+		h.Pieces = h.sha1er.Sum(h.Pieces)
+	}
+	return
+}
+
 func clean(dirname string) (err error) {
 	dir, err := os.Open(dirname)
 	if err != nil {
@@ -237,4 +357,23 @@ func clean(dirname string) (err error) {
 	}
 
 	return
+}
+
+func torrentWalk(root string, fn filepath.WalkFunc) (err error) {
+	return filepath.Walk(root, func(path string, info os.FileInfo, perr error) (err error) {
+		if !info.Mode().IsRegular() {
+			return
+		}
+
+		// Torrents can't have empty files
+		if info.Size() == 0 {
+			return
+		}
+
+		if filepath.Ext(path) == ".part" {
+			return
+		}
+
+		return fn(path, info, perr)
+	})
 }
