@@ -19,6 +19,12 @@ type changesline struct {
 	Doc *dbdoc `json:"doc"`
 }
 
+type PutResponse struct {
+	Ok  string `json:"ok"`
+	Id  string `json:"id"`
+	Rev string `json:"rev"`
+}
+
 type dbdoc struct {
 	Id     string `json:"_id"`
 	Rev    string `json:"_rev,omitempty"`
@@ -89,6 +95,12 @@ func (db *DB) Connect() (err error) {
 	db.lastRev = jsdoc.Rev
 	db.lastMagnet = jsdoc.Magnet
 
+	go func() {
+		if db.lastMagnet != "" {
+			db.newTorrent <- db.lastMagnet
+		}
+	}()
+
 	go db.listenTorrentChanges()
 
 	return
@@ -122,6 +134,16 @@ func (db *DB) PushNewTorrent(ih string) (err error) {
 	if putResp.StatusCode != 200 && putResp.StatusCode != 201 {
 		log.Println("Error when putting doc:", putResp.Status)
 	}
+	defer putResp.Body.Close()
+
+	var resp PutResponse
+	err = json.NewDecoder(putResp.Body).Decode(&resp)
+	if err != nil {
+		return
+	}
+
+	db.lastRev = resp.Rev
+	db.lastMagnet = doc.Magnet
 
 	return
 }
