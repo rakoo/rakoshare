@@ -135,7 +135,7 @@ mainLoop:
 		case magnet := <-couchdb.newTorrent:
 			log.Println("new torrent:", magnet)
 
-			ts, err := startSession(magnet, torrentSessions, listenPort)
+			ts, err := startSession(magnet, torrentSessions, listenPort, lpd)
 			if err != nil {
 				log.Fatal("Couldn't start new session: ", err)
 			}
@@ -155,13 +155,13 @@ mainLoop:
 			couchdb.PushNewTorrent(ih)
 
 			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
-			startSession(torrentFile, torrentSessions, listenPort)
+			startSession(torrentFile, torrentSessions, listenPort, lpd)
 		}
 	}
 
 }
 
-func startSession(torrent string, torrentSessions map[string]*TorrentSession, listenPort int) (ts *TorrentSession, err error) {
+func startSession(torrent string, torrentSessions map[string]*TorrentSession, listenPort int, lpd *Announcer) (ts *TorrentSession, err error) {
 
 	meta, err := NewMetaInfo(torrent)
 	if err != nil {
@@ -190,6 +190,7 @@ func startSession(torrent string, torrentSessions map[string]*TorrentSession, li
 
 	torrentSessions[ts.m.InfoHash] = ts
 
+	lpd.Announce(ts.m.InfoHash)
 	return
 }
 
