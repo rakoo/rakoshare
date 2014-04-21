@@ -391,10 +391,14 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 	delete(t.peers, peer.address)
 }
 
-func (t *TorrentSession) deadlockDetector() {
+func (t *TorrentSession) deadlockDetector(quit chan struct{}) {
 	lastHeartbeat := time.Now()
+
+deadlockLoop:
 	for {
 		select {
+		case <-quit:
+			break deadlockLoop
 		case <-t.heartbeat:
 			lastHeartbeat = time.Now()
 		case <-time.After(15 * time.Second):
@@ -419,7 +423,8 @@ func (t *TorrentSession) Quit() (err error) {
 
 func (t *TorrentSession) DoTorrent() {
 	t.heartbeat = make(chan bool, 1)
-	go t.deadlockDetector()
+	quitDeadlock := make(chan struct{})
+	go t.deadlockDetector(quitDeadlock)
 	log.Println("Fetching torrent.")
 	rechokeChan := time.Tick(1 * time.Second)
 	verboseChan := time.Tick(10 * time.Second)
@@ -578,6 +583,7 @@ func (t *TorrentSession) DoTorrent() {
 
 		case <-t.quit:
 			log.Println("Quitting torrent session")
+			quitDeadlock <- struct{}{}
 			return
 		}
 	}
