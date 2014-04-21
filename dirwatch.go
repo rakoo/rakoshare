@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +51,11 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 		}
 	}
 
+	err = clean(bitshareDir)
+	if err != nil {
+		log.Fatal("Couldn't clean bitshare dir:", err)
+	}
+
 	w = &Watcher{
 		lastModTime:    lastModTime,
 		bitshareDir:    bitshareDir,
@@ -70,7 +76,9 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 		ih = w.torrentify()
 	}
 	go func() {
-		w.PingNewTorrent <- ih
+		if ih != "" {
+			w.PingNewTorrent <- ih
+		}
 	}()
 
 	return
@@ -206,6 +214,27 @@ func (w *Watcher) torrentify() (ih string) {
 		log.Fatal(err)
 	}
 	w.lastModTime = st.ModTime()
+
+	return
+}
+
+func clean(dirname string) (err error) {
+	dir, err := os.Open(dirname)
+	if err != nil {
+		return
+	}
+	names, err := dir.Readdirnames(-1)
+	if err != nil {
+		return
+	}
+	for _, name := range names {
+		if strings.HasPrefix(name, "current.") {
+			err = os.Remove(filepath.Join(dirname, name))
+			if err != nil {
+				break
+			}
+		}
+	}
 
 	return
 }
