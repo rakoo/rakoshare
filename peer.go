@@ -146,14 +146,15 @@ func (p *peerState) SendBitfield(bs *Bitset) {
 	p.sendMessage(msg)
 }
 
-func (p *peerState) SendExtensions(port int) {
+func (p *peerState) SendExtensions(port int, metadataSize int) {
 
 	handshake := map[string]interface{}{
 		"m": map[string]int{
 			"ut_metadata": 1,
 			"ut_pex":      2,
 		},
-		"v": "Taipei-Torrent dev",
+		"v":             "Taipei-Torrent dev",
+		"metadata_size": metadataSize,
 	}
 
 	var buf bytes.Buffer
@@ -289,7 +290,7 @@ func (p *peerState) sendMetadataRequest(piece int) {
 
 func (p *peerState) sendExtensionMessage(typ string, data interface{}) {
 	if _, ok := p.theirExtensions[typ]; !ok {
-		// They don't understand ut_pex
+		// They don't understand this extension
 		return
 	}
 

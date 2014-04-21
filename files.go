@@ -141,13 +141,13 @@ func NewFileStore(info *InfoDict, storePath string) (f FileStore, totalSize int6
 	numFiles := len(info.Files)
 	if numFiles == 0 {
 		// Create dummy Files structure.
-		info = &InfoDict{Files: []FileDict{FileDict{info.Length, []string{info.Name}, info.Md5sum}}}
+		info = &InfoDict{Files: []*FileDict{&FileDict{info.Length, []string{info.Name}, info.Md5sum}}}
 		numFiles = 1
 	}
 	fs.files = make([]fileEntry, numFiles)
 	fs.offsets = make([]int64, numFiles)
 	for i, _ := range info.Files {
-		src := &info.Files[i]
+		src := info.Files[i]
 		// Clean the source path before appending to the storePath. This
 		// ensures that source paths that start with ".." can't escape.
 		cleanSrcPath := path.Clean("/" + path.Join(src.Path...))[1:]

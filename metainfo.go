@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"errors"
 	"fmt"
@@ -30,18 +31,21 @@ type InfoDict struct {
 	Length int64  `bencode:"length,omitempty"`
 	Md5sum string `bencode:"md5sum,omitempty"`
 	// Multiple File mode
-	Files []FileDict `bencode:"files,omitempty"`
+	Files []*FileDict `bencode:"files,omitempty"`
 }
 
 type MetaInfo struct {
-	Info         InfoDict   `bencode:"info"`
-	InfoHash     string     `bencode:"-"`
+	Info         *InfoDict  `bencode:"info"`
 	Announce     string     `bencode:"announce,omitempty"`
 	AnnounceList [][]string `bencode:"announce-list,omitempty"`
 	CreationDate int64      `bencode:"creation date,omitempty"`
 	Comment      string     `bencode:"comment,omitempty"`
 	CreatedBy    string     `bencode:"created by,omitempty"`
 	Encoding     string     `bencode:"encoding,omitempty"`
+
+	// These are not used for bencoding, only for helping
+	InfoHash string `bencode:"-"`
+	rawInfo  []byte `bencode:"-"`
 }
 
 func NewMetaInfo(torrent string) (m *MetaInfo, err error) {
@@ -125,6 +129,36 @@ func (m *MetaInfo) saveToDisk(dir string) (err error) {
 	defer f.Close()
 
 	return bencode.NewEncoder(f).Encode(m)
+}
+
+// Returns the size of the representation of this metainfo as a bencoded
+// dictionary
+func (m *MetaInfo) Size() (sz int) {
+	var buf bytes.Buffer
+	err := bencode.NewEncoder(&buf).Encode(m)
+	if err != nil {
+		log.Fatal("Couldn't bencode this metainfo: ", err)
+	}
+
+	return buf.Len()
+}
+
+// Returns the representation of this metainfo's info dict as a
+// bencoded dictionary
+func (m *MetaInfo) RawInfo() (b []byte) {
+	if m.rawInfo != nil {
+		return m.rawInfo
+	}
+
+	var buf bytes.Buffer
+	err := bencode.NewEncoder(&buf).Encode(m.Info)
+	if err != nil {
+		log.Fatal("Couldn't bencode this metainfo's dict: ", err)
+	}
+
+	m.rawInfo = buf.Bytes()
+
+	return m.rawInfo
 }
 
 func getMetaInfo(torrent string) (metaInfo *MetaInfo, err error) {

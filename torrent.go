@@ -11,8 +11,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -46,12 +44,6 @@ const (
 
 const (
 	EXTENSION_HANDSHAKE = iota
-)
-
-const (
-	METADATA_REQUEST = iota
-	METADATA_DATA
-	METADATA_REJECT
 )
 
 // Should be overriden by flag. Not thread safe.
@@ -151,6 +143,8 @@ type TorrentSession struct {
 	dht               *dht.DHT
 	quit              chan bool
 	trackerLessMode   bool
+
+	NewTorrent chan *MetaInfo
 }
 
 func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err error) {
@@ -159,6 +153,7 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 		peerMessageChan: make(chan peerMessage),
 		activePieces:    make(map[int]*ActivePiece),
 		quit:            make(chan bool),
+		NewTorrent:      make(chan *MetaInfo),
 	}
 
 	if useDHT {
@@ -200,15 +195,15 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 	return t, err
 }
 
-func (t *TorrentSession) reload(metadata string) {
-	var info InfoDict
-	err := bencode.Unmarshal(bytes.NewReader([]byte(metadata)), &info)
+func (t *TorrentSession) reload(info []byte) {
+	err := bencode.Unmarshal(bytes.NewReader(info), t.m.Info)
 	if err != nil {
 		log.Println("Error when reloading torrent: ", err)
 		return
 	}
 
-	t.m.Info = info
+	t.NewTorrent <- t.m
+
 	t.load()
 }
 
@@ -374,7 +369,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	go ps.peerReader(t.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
-		ps.SendExtensions(t.si.Port)
+		ps.SendExtensions(t.si.Port, t.m.Size())
 	} else {
 		ps.SendBitfield(t.pieceSet)
 	}
@@ -1018,10 +1013,13 @@ func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
 		}
 
 		// Fill metadata info
-		if h.MetadataSize != uint(0) {
-			nPieces := uint(math.Ceil(float64(h.MetadataSize) / float64(16*1024)))
-			t.si.ME.Pieces = make([][]byte, nPieces)
+		if h.MetadataSize == 0 {
+			log.Printf("Missing metadata_size argument, this is invalid.")
+			return
 		}
+
+		nPieces := uint(math.Ceil(float64(h.MetadataSize) / float64(16*1024)))
+		t.si.ME.Pieces = make([][]byte, nPieces)
 
 		if _, ok := p.theirExtensions["ut_metadata"]; ok {
 			t.si.ME.Transferring = true

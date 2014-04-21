@@ -10,6 +10,16 @@ import (
 	bencode "code.google.com/p/bencode-go"
 )
 
+const (
+	METADATA_REQUEST = iota
+	METADATA_DATA
+	METADATA_REJECT
+)
+
+const (
+	METADATA_PIECE_SIZE = 1 << 14 // 16kiB
+)
+
 type MetadataMessage struct {
 	MsgType   uint8 "msg_type"
 	Piece     uint  "piece"
@@ -32,7 +42,46 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 	mt := message.MsgType
 	switch mt {
 	case METADATA_REQUEST:
-		//TODO: Answer to metadata request
+		rawInfo := t.m.RawInfo()
+
+		from := int(message.Piece * METADATA_PIECE_SIZE)
+
+		// Piece asked must be between the first one and the last one.
+		// Note that the last one will most of the time be smaller than
+		// METADATA_PIECE_SIZE
+		if from >= len(rawInfo) {
+			log.Printf("%d is out of range. Not sending this\n", message.Piece)
+			break
+		}
+
+		to := int(from + METADATA_PIECE_SIZE)
+		if to > len(rawInfo) {
+			to = len(rawInfo)
+		}
+
+		if _, ok := p.theirExtensions["ut_metadata"]; !ok {
+			log.Println("%s doesn't understand ut_metadata\n", p.address)
+			break
+		}
+
+		respHeader := MetadataMessage{
+			MsgType: METADATA_DATA,
+			Piece:   message.Piece,
+		}
+
+		var resp bytes.Buffer
+		resp.WriteByte(EXTENSION)
+		resp.WriteByte(byte(p.theirExtensions["ut_metadata"]))
+
+		err = bencode.Marshal(&resp, respHeader)
+		if err != nil {
+			log.Println("Couldn't header metadata response: ", err)
+			break
+		}
+
+		resp.Write(rawInfo[from:to])
+		p.sendMessage(resp.Bytes())
+
 	case METADATA_DATA:
 
 		var piece bytes.Buffer
@@ -41,6 +90,13 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 			log.Println("Error when getting metadata piece: ", err)
 			return
 		}
+
+		if int(message.Piece) >= len(t.si.ME.Pieces) {
+			log.Printf("Rejecting invalid metadata piece %d, max is %d\n",
+				message.Piece, len(t.si.ME.Pieces)-1)
+			break
+		}
+
 		t.si.ME.Pieces[message.Piece] = piece.Bytes()
 
 		finished := true
@@ -60,19 +116,19 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 		for _, piece := range t.si.ME.Pieces {
 			full.Write(piece)
 		}
-		b := full.Bytes()
+		info := full.Bytes()
 
 		// Verify sha
 		sha := sha1.New()
-		sha.Write(b)
+		sha.Write(info)
 		actual := string(sha.Sum(nil))
 		if actual != t.m.InfoHash {
 			log.Println("Invalid metadata")
-			log.Printf("Expected %s, got %s\n", t.m.InfoHash, actual)
+			log.Printf("Expected %x, got %x\n", t.m.InfoHash, actual)
+			break
 		}
 
-		metadata := string(b)
-		t.reload(metadata)
+		t.reload(info)
 	case METADATA_REJECT:
 		log.Printf("%d didn't want to send piece %d\n", p.address, message.Piece)
 	default:
