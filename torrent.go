@@ -227,22 +227,7 @@ func (t *TorrentSession) load() {
 		t.trackerLessMode = trackerLessMode
 	}
 
-	ext := ".torrent"
-	dir := fileDir
-	if len(t.m.Info.Files) != 0 {
-		torrentName := t.m.Info.Name
-		if torrentName == "" {
-			torrentName = filepath.Base(torrent)
-		}
-		// canonicalize the torrent path and make sure it doesn't start with ".."
-		torrentName = path.Clean("/" + torrentName)
-		dir += torrentName
-		if dir[len(dir)-len(ext):] == ext {
-			dir = dir[:len(dir)-len(ext)]
-		}
-	}
-
-	t.fileStore, t.totalSize, err = NewFileStore(&t.m.Info, dir)
+	t.fileStore, t.totalSize, err = NewFileStore(t.m.Info, fileDir)
 	if err != nil {
 		return
 	}
