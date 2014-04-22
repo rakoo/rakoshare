@@ -107,6 +107,10 @@ func (db *DB) Connect() (err error) {
 }
 
 func (db *DB) PushNewTorrent(ih string) (err error) {
+	if len(ih) != 20 {
+		return errors.New("Incorrect infohash")
+	}
+
 	doc := dbdoc{
 		Id:     "current",
 		Magnet: fmt.Sprintf("magnet:?xt=urn:btih:%x", ih),
