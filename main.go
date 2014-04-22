@@ -133,8 +133,6 @@ mainLoop:
 				ts.hintNewPeer(announce.peer)
 			}
 		case magnet := <-couchdb.newTorrent:
-			log.Println("new torrent:", magnet)
-
 			ts, err := startSession(magnet, torrentSessions, listenPort, lpd)
 			if err != nil {
 				log.Fatal("Couldn't start new session: ", err)
@@ -191,6 +189,8 @@ func startSession(torrent string, torrentSessions map[string]*TorrentSession, li
 	torrentSessions[ts.m.InfoHash] = ts
 
 	lpd.Announce(ts.m.InfoHash)
+
+	log.Println("new torrent:", torrent)
 	return
 }
 
