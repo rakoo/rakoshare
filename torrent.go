@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	bencode "code.google.com/p/bencode-go"
 	"github.com/nictuku/dht"
 	"github.com/nictuku/nettools"
+	"github.com/zeebo/bencode"
 )
 
 const (
@@ -196,7 +196,7 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 }
 
 func (t *TorrentSession) reload(info []byte) {
-	err := bencode.Unmarshal(bytes.NewReader(info), t.m.Info)
+	err := bencode.NewDecoder(bytes.NewReader(info)).Decode(t.m.Info)
 	if err != nil {
 		log.Println("Error when reloading torrent: ", err)
 		return
@@ -990,14 +990,14 @@ type ExtensionHandshake struct {
 	Ipv4   string         "ipv4"
 	Reqq   uint16         "reqq"
 
-	MetadataSize uint "metadata_size"
+	MetadataSize int "metadata_size"
 }
 
 func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
 
 	var h ExtensionHandshake
 	if msg[0] == EXTENSION_HANDSHAKE {
-		err = bencode.Unmarshal(bytes.NewReader(msg[1:]), &h)
+		err = bencode.NewDecoder(bytes.NewReader(msg[1:])).Decode(&h)
 		if err != nil {
 			log.Println("Error when unmarshaling extension handshake")
 			return err

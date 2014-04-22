@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	bencode "code.google.com/p/bencode-go"
+	"github.com/zeebo/bencode"
 )
 
 const MAX_OUR_REQUESTS = 2
@@ -148,19 +148,19 @@ func (p *peerState) SendBitfield(bs *Bitset) {
 
 func (p *peerState) SendExtensions(port int, metadataSize int) {
 
-	handshake := map[string]interface{}{
-		"m": map[string]int{
+	handshake := ExtensionHandshake{
+		M: map[string]int{
 			"ut_metadata": 1,
 			"ut_pex":      2,
 		},
-		"v":             "Taipei-Torrent dev",
-		"metadata_size": metadataSize,
+		V:            "Taipei-Torrent dev",
+		MetadataSize: metadataSize,
 	}
 
 	var buf bytes.Buffer
-	err := bencode.Marshal(&buf, handshake)
+	err := bencode.NewEncoder(&buf).Encode(handshake)
 	if err != nil {
-		//log.Println("Error when marshalling extension message")
+		log.Println("Error when marshalling extension message")
 		return
 	}
 
@@ -295,7 +295,7 @@ func (p *peerState) sendExtensionMessage(typ string, data interface{}) {
 	}
 
 	var payload bytes.Buffer
-	err := bencode.Marshal(&payload, data)
+	err := bencode.NewEncoder(&payload).Encode(data)
 	if err != nil {
 		log.Printf("Couldn't marshal extension message: ", err)
 	}
