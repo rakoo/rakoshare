@@ -70,27 +70,18 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 	go w.watch()
 
 	// Initialization
-	var ih string
-
-	if w.lastModTime.Before(defaultNow) {
-		ih, err = currentTorrent(w.bitshareDir)
-		if err != nil {
-			log.Fatal("Couldn't get current infohash: ", err)
-		}
-	} else {
-		ih = w.torrentify()
-	}
-	go func() {
-		if ih != "" {
+	ih, err := w.currentTorrent()
+	if err == nil {
+		go func() {
 			w.PingNewTorrent <- ih
-		}
-	}()
+		}()
+	}
 
 	return
 }
 
-func currentTorrent(dir string) (ih string, err error) {
-	currentFile := filepath.Join(dir, "current")
+func (w *Watcher) currentTorrent() (ih string, err error) {
+	currentFile := filepath.Join(w.bitshareDir, "current")
 	st, err := os.Stat(currentFile)
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatal("Couldn't stat current file: ", err)
