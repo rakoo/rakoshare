@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/textproto"
+	"time"
 )
 
 const (
@@ -153,79 +155,79 @@ func (db *DB) PushNewTorrent(ih string) (err error) {
 }
 
 func (db *DB) listenTorrentChanges() (err error) {
-	url := COUCH_URL + "/_changes?since=now&feed=continuous&include_docs=true"
-	changesResp, err := http.Get(url)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer changesResp.Body.Close()
 
-	rd := newLiner(changesResp.Body)
-	for line := range rd.Lines() {
-		var change changesline
-		err := json.Unmarshal(line, &change)
-		if err != nil {
-			log.Println("Couldn't decode into document:", err)
-			continue
-		}
+	var newRev string
+	var newMagnet string
 
-		if change.Doc != nil && change.Doc.Id != "" {
-			db.newTorrent <- change.Doc.Magnet
-		}
-	}
-
-	return
-}
-
-// A wrapper on bufio.Reader. Creates a channel on Lines that will spit
-// reader line by line.
-type liner struct {
-	buf       bytes.Buffer
-	bufreader *bufio.Reader
-}
-
-func newLiner(rd io.Reader) (l liner) {
-	return liner{
-		bufreader: bufio.NewReader(rd),
-	}
-}
-
-func (l liner) Lines() (c chan []byte) {
-	c = make(chan []byte)
-	go l.split(c)
-
-	return
-}
-
-func (l liner) split(c chan []byte) {
+	feed := newCouchChangesFeed()
 	for {
-		line, isPrefix, err := l.bufreader.ReadLine()
-		if err != nil {
-			if err == io.EOF {
+		select {
+		case changeRaw := <-feed.Changes:
+			var change changesline
+			err := json.Unmarshal(changeRaw, &change)
+			if err != nil {
+				log.Println("Couldn't decode into document:", err)
 				continue
 			}
 
-			log.Fatal(err)
-		}
+			if change.Doc != nil && change.Doc.Id != "" {
+				newRev = change.Doc.Rev
+				newMagnet = change.Doc.Magnet
+			}
+		case <-time.After(3 * time.Second):
 
-		if len(line) == 0 {
-			continue
-		}
+			if newRev != "" && newRev != db.lastRev &&
+				newMagnet != "" && newMagnet != db.lastMagnet {
+				db.lastRev = newRev
+				db.lastMagnet = newMagnet
 
-		_, err = l.buf.Write(line)
+				db.newTorrent <- db.lastMagnet
+			}
+		}
+	}
+
+	return
+}
+
+// a CouchChangesFeed listens to the _changes endpoint on CouchDB and produces
+// all lines on its Lines channel
+type CouchChangesFeed struct {
+	Changes chan []byte
+	url     string
+}
+
+func newCouchChangesFeed() CouchChangesFeed {
+	f := CouchChangesFeed{
+		url:     COUCH_URL + "/_changes?since=now&feed=continuous&include_docs=true",
+		Changes: make(chan []byte),
+	}
+	go f.SendLines()
+	return f
+}
+
+func (f CouchChangesFeed) SendLines() {
+	for {
+		changesResp, err := http.Get(f.url)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		if line != nil && !isPrefix {
-			lastline := make([]byte, l.buf.Len())
-			_, err := l.buf.Read(lastline)
+		linesReader := textproto.NewReader(bufio.NewReader(changesResp.Body))
+		for {
+			line, err := linesReader.ReadLineBytes()
 			if err != nil {
-				log.Fatal(err)
-			}
-			l.buf.Reset()
+				if err == io.EOF {
+					break
+				}
 
-			c <- lastline
+				log.Println(err)
+				continue
+			}
+			f.Changes <- line
 		}
+
+		changesResp.Body.Close()
 	}
+
+	return
 }
