@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 )
 
 var (
@@ -118,7 +119,6 @@ mainLoop:
 			}
 			break mainLoop
 		case c := <-conChan:
-			log.Printf("New bt connection for ih %x", c.infohash)
 			if ts, ok := torrentSessions[c.infohash]; ok {
 				ts.AcceptNewPeer(c)
 			}
@@ -133,7 +133,15 @@ mainLoop:
 				ts.hintNewPeer(announce.peer)
 			}
 		case magnet := <-couchdb.newTorrent:
-			ts, err := startSession(magnet, torrentSessions, listenPort, lpd)
+			input := magnet
+
+			ih := strings.Replace(magnet, "magnet:?xt=urn:btih:", "", 1)
+			torrentFile := filepath.Join(watcher.bitshareDir, ih)
+			if _, err := os.Stat(torrentFile); err == nil {
+				input = torrentFile
+			}
+
+			ts, err := startSession(input, torrentSessions, listenPort, lpd)
 			if err != nil {
 				log.Fatal("Couldn't start new session: ", err)
 			}
