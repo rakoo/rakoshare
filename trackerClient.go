@@ -75,7 +75,9 @@ func queryTrackers(announceList [][]string, report ClientStatusReport) (tr *Trac
 			}
 		}
 	}
-	log.Println("Error: Did not successfully contact a tracker:", announceList)
+	if len(announceList) > 0 {
+		log.Println("Error: Did not successfully contact a tracker:", announceList)
+	}
 	return
 }
 
