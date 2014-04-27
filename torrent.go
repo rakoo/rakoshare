@@ -224,7 +224,7 @@ func (t *TorrentSession) load() {
 
 	t.fileStore, t.totalSize, err = NewFileStore(t.m.Info, fileDir)
 	if err != nil {
-		return
+		log.Fatal("Couldn't create filestore: ", err)
 	}
 	t.lastPieceLength = int(t.totalSize % t.m.Info.PieceLength)
 	if t.lastPieceLength == 0 { // last piece is a full piece
@@ -233,6 +233,9 @@ func (t *TorrentSession) load() {
 
 	start := time.Now()
 	good, bad, pieceSet, err := checkPieces(t.fileStore, t.totalSize, t.m)
+	if err != nil {
+		log.Fatal("Error when checking pieces: ", err)
+	}
 	end := time.Now()
 	log.Printf("Computed missing pieces (%.2f seconds)", end.Sub(start).Seconds())
 	if err != nil {
@@ -246,6 +249,13 @@ func (t *TorrentSession) load() {
 	left := int64(bad) * int64(t.m.Info.PieceLength)
 	if !t.pieceSet.IsSet(t.totalPieces - 1) {
 		left = left - t.m.Info.PieceLength + int64(t.lastPieceLength)
+	}
+
+	if left == 0 {
+		err := t.fileStore.Cleanup()
+		if err != nil {
+			log.Println("Couldn't cleanup correctly: ", err)
+		}
 	}
 
 	t.si.HaveTorrent = true
