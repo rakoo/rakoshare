@@ -38,6 +38,10 @@ type peerState struct {
 	// This field tells if the peer can send a bitfield or not
 	can_receive_bitfield bool
 
+	// Stores the bitfield they sent us but we can't verify yet (because
+	// we don't have the torrent yet) and will commit when we can
+	temporaryBitfield []byte
+
 	theirExtensions map[string]int
 }
 

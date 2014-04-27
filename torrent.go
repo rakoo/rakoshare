@@ -360,18 +360,24 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 		}
 	}
 
-	// By default, a peer has no pieces. If it has pieces, it should send
-	// a BITFIELD message as a first message
-	ps.have = NewBitset(t.totalPieces)
-
 	t.peers[peer] = ps
 	go ps.peerWriter(t.peerMessageChan)
 	go ps.peerReader(t.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(t.si.Port, t.m.Size())
+
+		if t.si.HaveTorrent {
+			ps.SendBitfield(t.pieceSet)
+		}
 	} else {
 		ps.SendBitfield(t.pieceSet)
+	}
+
+	if t.si.HaveTorrent {
+		// By default, a peer has no pieces. If it has pieces, it should send
+		// a BITFIELD message as a first message
+		ps.have = NewBitset(t.totalPieces)
 	}
 }
 
@@ -802,7 +808,18 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 }
 
 func (t *TorrentSession) extensionMessage(message []byte, p *peerState) (err error) {
-	if message[0] == EXTENSION {
+	switch message[0] {
+	case CHOKE:
+		p.peer_choking = true
+	case UNCHOKE:
+		p.peer_choking = false
+	case BITFIELD:
+		p.SetChoke(false) // TODO: better choke policy
+
+		p.temporaryBitfield = make([]byte, len(message[1:]))
+		copy(p.temporaryBitfield, message[1:])
+		p.can_receive_bitfield = false
+	case EXTENSION:
 		err := t.DoExtension(message[1:], p)
 		if err != nil {
 			log.Printf("Failed extensions for %s: %s\n", p.address, err)
@@ -875,6 +892,7 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 			return errors.New("Invalid bitfield data.")
 		}
 		t.checkInteresting(p)
+		p.can_receive_bitfield = false
 	case REQUEST:
 		// log.Println("request", p.address)
 		if len(message) != 13 {
@@ -967,15 +985,8 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 			log.Printf("Failed extensions for %s: %s\n", p.address, err)
 		}
 
-		if t.si.HaveTorrent {
-			p.SendBitfield(t.pieceSet)
-		}
 	default:
 		return errors.New(fmt.Sprintf("Uknown message id: %d\n", messageId))
-	}
-
-	if messageId != EXTENSION {
-		p.can_receive_bitfield = false
 	}
 
 	return

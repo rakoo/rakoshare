@@ -42,6 +42,10 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 	mt := message.MsgType
 	switch mt {
 	case METADATA_REQUEST:
+		if !t.si.HaveTorrent {
+			break
+		}
+
 		rawInfo := t.m.RawInfo()
 
 		from := int(message.Piece * METADATA_PIECE_SIZE)
@@ -84,6 +88,10 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 
 	case METADATA_DATA:
 
+		if t.si.HaveTorrent {
+			break
+		}
+
 		var piece bytes.Buffer
 		_, err := io.Copy(&piece, br)
 		if err != nil {
@@ -104,6 +112,7 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 			if len(data) == 0 {
 				p.sendMetadataRequest(idx)
 				finished = false
+				break
 			}
 		}
 
@@ -129,6 +138,20 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 		}
 
 		t.reload(info)
+
+		if p.have == nil {
+			if p.temporaryBitfield != nil {
+				p.have = NewBitsetFromBytes(t.totalPieces, p.temporaryBitfield)
+				p.temporaryBitfield = nil
+			} else {
+				p.have = NewBitset(t.totalPieces)
+			}
+		}
+		if p.have == nil {
+			log.Panic("Invalid bitfield data")
+		}
+
+		p.SendBitfield(t.pieceSet)
 	case METADATA_REJECT:
 		log.Printf("%d didn't want to send piece %d\n", p.address, message.Piece)
 	default:
