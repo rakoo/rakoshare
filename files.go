@@ -33,6 +33,7 @@ type fileStore struct {
 }
 
 func (fe *fileEntry) open(name string, length int64) (err error) {
+
 	partname := name + ".part"
 	_, parterr := os.Stat(partname)
 	if parterr == nil {
@@ -44,24 +45,30 @@ func (fe *fileEntry) open(name string, length int64) (err error) {
 
 	fe.length = length
 	fe.name = name
-	st, err := os.Stat(name)
 
-	if err != nil && os.IsNotExist(err) {
-		f, err := os.Create(name)
+	// Test for existence and correct length
+	var needToRetrieve bool
+	st, errStat := os.Stat(name)
+	if errStat != nil && os.IsNotExist(errStat) {
+		needToRetrieve = true
+	} else if st.Size() != fe.length {
+		needToRetrieve = true
+	}
+
+	if needToRetrieve {
+		f, err := os.Create(partname)
 		defer f.Close()
 		if err != nil {
 			return err
 		}
-	} else {
-		if st.Size() == length {
-			return
+		fe.name = partname
+
+		err = os.Truncate(fe.name, length)
+		if err != nil {
+			err = errors.New("could not truncate file")
 		}
 	}
-	err = os.Truncate(name, length)
-	if err != nil {
-		return
-		err = errors.New("Could not truncate file.")
-	}
+
 	return
 }
 
@@ -80,6 +87,11 @@ func (fe *fileEntry) SetPart() {
 	}
 
 	fe.name = fe.name + ".part"
+
+	err = os.Truncate(fe.name, fe.length)
+	if err != nil {
+		log.Println("Could not truncate file.")
+	}
 }
 
 func (fe *fileEntry) ReadAt(p []byte, off int64) (n int, err error) {
@@ -88,7 +100,12 @@ func (fe *fileEntry) ReadAt(p []byte, off int64) (n int, err error) {
 		return
 	}
 	defer file.Close()
-	return file.ReadAt(p, off)
+	n, err = file.ReadAt(p, off)
+	if err != nil {
+		log.Fatalf("Couldn't read %d-%d from %s: %s\n", off,
+			off+int64(len(p)), fe.name, err)
+	}
+	return
 }
 
 func (fe *fileEntry) WriteAt(p []byte, off int64) (n int, err error) {
@@ -241,7 +258,7 @@ func (f *fileStore) WriteAt(p []byte, off int64) (n int, err error) {
 	// This is defined by the bittorrent protocol.
 	for i, _ := range p {
 		if p[i] != 0 {
-			err = errors.New("Unexpected non-zero data at end of store.")
+			err = errors.New("unexpected non-zero data at end of store")
 			n = n + i
 			return
 		}
