@@ -361,6 +361,10 @@ func torrentWalk(root string, fn filepath.WalkFunc) (err error) {
 			return
 		}
 
+		if strings.HasPrefix(filepath.Base(path), ".") {
+			return
+		}
+
 		if filepath.Ext(path) == ".part" {
 			return
 		}
