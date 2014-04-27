@@ -256,7 +256,7 @@ func createMeta(dir string) (meta *MetaInfo, err error) {
 			Pieces:      string(hasher.Pieces),
 			PieceLength: blockSize,
 			Private:     0,
-			Name:        filepath.Base(dir),
+			Name:        "tmp",
 			Files:       fileDicts,
 		},
 	}
