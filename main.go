@@ -103,9 +103,12 @@ func main() {
 	quitChan := listenSigInt()
 
 	// LPD
-	lpd, err := NewAnnouncer(listenPort)
-	if err != nil {
-		log.Fatal("Couldn't listen for Local Peer Discoveries: ", err)
+	lpd := &Announcer{announces: make(chan *Announce)}
+	if *useLPD {
+		lpd, err = NewAnnouncer(listenPort)
+		if err != nil {
+			log.Fatal("Couldn't listen for Local Peer Discoveries: ", err)
+		}
 	}
 
 	// Control session
@@ -117,7 +120,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	lpd.Announce(string(id))
+	if *useLPD {
+		lpd.Announce(string(id))
+	}
 
 mainLoop:
 	for {
@@ -156,7 +161,9 @@ mainLoop:
 				log.Fatal("Couldn't start new session: ", err)
 			}
 			go currentSession.DoTorrent()
-			lpd.Announce(ih)
+			if *useLPD {
+				lpd.Announce(ih)
+			}
 		case ih := <-controlSession.Torrents:
 			log.Printf("Got new metadata from control session: %x\n", ih)
 		}
