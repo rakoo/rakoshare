@@ -547,9 +547,8 @@ func (t *TorrentSession) DoTorrent() {
 			if t.si.Downloaded > 0 {
 				ratio = float64(t.si.Uploaded) / float64(t.si.Downloaded)
 			}
-			log.Println("Peers:", len(t.peers), "downloaded:", t.si.Downloaded,
-				"uploaded:", t.si.Uploaded, "ratio", ratio)
-			log.Println("good, total", t.goodPieces, t.totalPieces)
+			log.Printf("[CURRENT] Peers: %d, good/total: %d/%d, ratio: %f\n",
+				len(t.peers), t.goodPieces, t.totalPieces, ratio)
 		case <-keepAliveChan:
 			now := time.Now()
 			for _, peer := range t.peers {
@@ -1068,4 +1067,8 @@ func (t *TorrentSession) isInteresting(p *peerState) bool {
 		}
 	}
 	return false
+}
+
+func (t *TorrentSession) Matches(ih string) bool {
+	return t.m.InfoHash == ih
 }

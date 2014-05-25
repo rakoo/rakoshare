@@ -11,12 +11,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime/pprof"
-	"strings"
 )
 
 var (
 	cpuprofile = flag.String("cpuprofile", "", "If not empty, collects CPU profile samples and writes the profile to the given file before the program exits")
 	memprofile = flag.String("memprofile", "", "If not empty, writes memory heap allocations to the given file before the program exits")
+	id         = flag.String("id", "", "The id of the share")
 )
 
 var torrent string
@@ -24,6 +24,13 @@ var torrent string
 func main() {
 	flag.Usage = usage
 	flag.Parse()
+
+	if *id == "" {
+		fmt.Println("Missing a share id")
+		usage()
+		os.Exit(2)
+	}
+	shareID := NewShareID(*id)
 
 	if flag.NArg() != 0 {
 		log.Println("Don't want arguments")
@@ -71,8 +78,6 @@ func main() {
 
 	log.Println("Starting.")
 
-	torrentSessions := make(map[string]*TorrentSession)
-
 	// torrentDir and torrentFile
 	user, err := user.Current()
 	if err != nil {
@@ -82,10 +87,9 @@ func main() {
 	if _, err := os.Stat(torrentDir); os.IsNotExist(err) {
 		err := os.MkdirAll(torrentDir, os.ModeDir|0755)
 		if err != nil {
-			log.Fatal("Couldn't make home dir:", err)
+			log.Fatal("Couldn't make torrent dir:", err)
 		}
 	}
-	//torrentFile := filepath.Join(torrentDir, "current.torrent")
 
 	// External listener
 	conChan, listenPort, err := listenForPeerConnections()
@@ -93,34 +97,44 @@ func main() {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
 
+	currentSession := NewCurrentSession(torrentDir, listenPort)
+
 	// quitChan
 	quitChan := listenSigInt()
 
-	// DB for synchronisation
-	couchdb := NewDB()
-
 	// LPD
-	lpd := &Announcer{}
-	if *useLPD {
-		lpd = startLPD(torrentSessions, listenPort)
+	lpd, err := NewAnnouncer(listenPort)
+	if err != nil {
+		log.Fatal("Couldn't listen for Local Peer Discoveries: ", err)
 	}
+
+	// Control session
+	controlSession, err := NewControlSession(shareID, listenPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	id, err := hex.DecodeString(shareID.PublicID())
+	if err != nil {
+		log.Fatal(err)
+	}
+	lpd.Announce(string(id))
 
 mainLoop:
 	for {
 		select {
 		case <-quitChan:
-			for _, ts := range torrentSessions {
-				err := ts.Quit()
-				if err != nil {
-					log.Println("Failed: ", err)
-				} else {
-					log.Println("Done")
-				}
+			err := currentSession.Quit()
+			if err != nil {
+				log.Println("Failed: ", err)
+			} else {
+				log.Println("Done")
 			}
 			break mainLoop
 		case c := <-conChan:
-			if ts, ok := torrentSessions[c.infohash]; ok {
-				ts.AcceptNewPeer(c)
+			if currentSession.Matches(c.infohash) {
+				currentSession.AcceptNewPeer(c)
+			} else if controlSession.Matches(c.infohash) {
+				controlSession.AcceptNewPeer(c)
 			}
 		case announce := <-lpd.announces:
 			hexhash, err := hex.DecodeString(announce.infohash)
@@ -128,78 +142,26 @@ mainLoop:
 				log.Println("Err with hex-decoding:", err)
 				break
 			}
-			if ts, ok := torrentSessions[string(hexhash)]; ok {
-				log.Printf("Received LPD announce for ih %s", announce.infohash)
-				ts.hintNewPeer(announce.peer)
+			if currentSession.Matches(string(hexhash)) {
+				currentSession.hintNewPeer(announce.peer)
+			} else if controlSession.Matches(string(hexhash)) {
+				controlSession.hintNewPeer(announce.peer)
 			}
-		case magnet := <-couchdb.newTorrent:
-			input := magnet
+		case ih := <-watcher.PingNewTorrent:
+			controlSession.Broadcast(ih)
 
-			ih := strings.Replace(magnet, "magnet:?xt=urn:btih:", "", 1)
-			torrentFile := filepath.Join(watcher.bitshareDir, ih)
-			if _, err := os.Stat(torrentFile); err == nil {
-				input = torrentFile
-			}
-
-			ts, err := startSession(input, torrentSessions, listenPort, lpd)
+			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
+			currentSession, err = NewTorrentSession(torrentFile, listenPort)
 			if err != nil {
 				log.Fatal("Couldn't start new session: ", err)
 			}
-
-			go func() {
-				for meta := range ts.NewTorrent {
-					meta.saveToDisk(bitshareDir)
-
-					currentFile := filepath.Join(bitshareDir, "current")
-					ihhex := fmt.Sprintf("%x", meta.InfoHash)
-					ioutil.WriteFile(currentFile, []byte(ihhex), 0600)
-				}
-			}()
-
-			torrentSessions[ts.m.InfoHash] = ts
-		case ih := <-watcher.PingNewTorrent:
-			couchdb.PushNewTorrent(ih)
-
-			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
-			startSession(torrentFile, torrentSessions, listenPort, lpd)
+			go currentSession.DoTorrent()
+			lpd.Announce(ih)
+		case ih := <-controlSession.Torrents:
+			log.Printf("Got new metadata from control session: %x\n", ih)
 		}
 	}
 
-}
-
-func startSession(torrent string, torrentSessions map[string]*TorrentSession, listenPort int, lpd *Announcer) (ts *TorrentSession, err error) {
-
-	meta, err := NewMetaInfo(torrent)
-	if err != nil {
-		return
-	}
-	if ts, ok := torrentSessions[meta.InfoHash]; ok {
-		return ts, nil
-	}
-
-	for idx, ts := range torrentSessions {
-		err := ts.Quit()
-		if err != nil {
-			log.Println("Failed: ", err)
-		}
-
-		delete(torrentSessions, idx)
-	}
-
-	ts, err = NewTorrentSession(torrent, listenPort)
-	if err != nil {
-		log.Println("Could not create torrent session.", err)
-		return
-	}
-	log.Printf("Starting torrent session for %x", ts.m.InfoHash)
-	go ts.DoTorrent()
-
-	torrentSessions[ts.m.InfoHash] = ts
-
-	lpd.Announce(ts.m.InfoHash)
-
-	log.Println("new torrent:", torrent)
-	return
 }
 
 func usage() {
@@ -215,15 +177,23 @@ func listenSigInt() chan os.Signal {
 	return c
 }
 
-func startLPD(torrentSessions map[string]*TorrentSession, listenPort int) (lpd *Announcer) {
-	lpd, err := NewAnnouncer(listenPort)
-	if err != nil {
-		log.Println("Couldn't listen for Local Peer Discoveries: ", err)
-		return
-	} else {
-		for _, ts := range torrentSessions {
-			lpd.Announce(ts.m.InfoHash)
-		}
+func NewCurrentSession(bitshareDir string, listenPort int) *TorrentSession {
+	currentFile := filepath.Join(bitshareDir, "current")
+	if _, err := os.Stat(currentFile); err != nil && os.IsNotExist(err) {
+		log.Fatal("No current file!")
 	}
-	return
+
+	currentIH, err := ioutil.ReadFile(currentFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	currentTorrent := filepath.Join(bitshareDir, string(currentIH))
+
+	ts, err := NewTorrentSession(currentTorrent, listenPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return ts
 }
