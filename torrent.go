@@ -9,14 +9,12 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nictuku/dht"
-	"github.com/nictuku/nettools"
 	"github.com/zeebo/bencode"
 )
 
@@ -70,8 +68,6 @@ func peerId() string {
 
 var kBitTorrentHeader = []byte{'\x13', 'B', 'i', 't', 'T', 'o', 'r',
 	'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
-
-func string2Bytes(s string) []byte { return bytes.NewBufferString(s).Bytes() }
 
 type ActivePiece struct {
 	downloaderCount []int // -1 means piece is already downloaded
@@ -281,8 +277,8 @@ func (ts *TorrentSession) Header() (header []byte) {
 	// Support Extension Protocol (BEP-0010)
 	header[25] |= 0x10
 
-	copy(header[28:48], string2Bytes(ts.m.InfoHash))
-	copy(header[48:68], string2Bytes(ts.si.PeerId))
+	copy(header[28:48], []byte(ts.m.InfoHash))
+	copy(header[48:68], []byte(ts.si.PeerId))
 
 	ts.torrentHeader = header
 
@@ -319,7 +315,7 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 
 	// If it's us, we don't need to continue
 	if id == ts.si.PeerId {
-		log.Println("Tried to connecting tou ourselves. Closing.")
+		log.Println("Tried to connecting to ourselves. Closing.")
 		conn.Close()
 		return
 	}
@@ -984,15 +980,14 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 }
 
 type ExtensionHandshake struct {
-	M      map[string]int "m"
-	P      uint16         "p"
-	V      string         "v"
-	Yourip string         "yourip"
-	Ipv6   string         "ipv6"
-	Ipv4   string         "ipv4"
-	Reqq   uint16         "reqq"
-
-	MetadataSize int "metadata_size"
+	M            map[string]int `bencode:"m"`
+	V            string         `bencode:"v"`
+	P            uint16         `bencode:"p,omitempty"`
+	Yourip       string         `bencode:"yourip,omitempty"`
+	Ipv6         string         `bencode:"ipv6,omitempty"`
+	Ipv4         string         `bencode:"ipv4,omitempty"`
+	Reqq         uint16         `bencode:"reqq,omitempty"`
+	MetadataSize int            `bencode:"metadata_size,omitempty"`
 }
 
 func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
