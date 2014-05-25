@@ -491,35 +491,16 @@ func (t *TorrentSession) DoTorrent() {
 			log.Println("Torrent has", t.ti.Complete, "seeders and", t.ti.Incomplete, "leachers.")
 			if !t.trackerLessMode {
 				newPeerCount := 0
-				{
-					peers := t.ti.Peers
-					if len(peers) > 0 {
-						const peerLen = 6
-						log.Println("Tracker gave us", len(peers)/peerLen, "peers")
-						for i := 0; i < len(peers); i += peerLen {
-							peer := nettools.BinaryToDottedPort(peers[i : i+peerLen])
-							if _, ok := t.peers[peer]; !ok {
-								newPeerCount++
-								go t.connectToPeer(peer)
-							}
-						}
+				for _, peer := range ti.Peers {
+					if _, ok := t.peers[peer]; !ok {
+						newPeerCount++
+						go t.connectToPeer(peer)
 					}
 				}
-				{
-					peers6 := t.ti.Peers6
-					if len(peers6) > 0 {
-						const peerLen = 18
-						log.Println("Tracker gave us", len(peers6)/peerLen, "IPv6 peers")
-						for i := 0; i < len(peers6); i += peerLen {
-							peerEntry := peers6[i : i+peerLen]
-							host := net.IP(peerEntry[0:16])
-							port := int((uint(peerEntry[16]) << 8) | uint(peerEntry[17]))
-							peer := net.JoinHostPort(host.String(), strconv.Itoa(port))
-							if _, ok := t.peers[peer]; !ok {
-								newPeerCount++
-								go t.connectToPeer(peer)
-							}
-						}
+				for _, peer6 := range ti.Peers6 {
+					if _, ok := t.peers[peer6]; !ok {
+						newPeerCount++
+						go t.connectToPeer(peer6)
 					}
 				}
 				log.Println("Contacting", newPeerCount, "new peers")
