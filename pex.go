@@ -128,14 +128,13 @@ func (t *TorrentSession) DoPex(msg []byte, p *peerState) {
 	}
 
 	for _, peer := range stringToPeers(message.Added) {
-		log.Println("Got new peer hint: ", peer)
 		t.hintNewPeer(peer)
 	}
 
 	// We don't use those yet, but this is possibly how we would
-	for _, flag := range stringToFlags(message.AddedF) {
-		log.Printf("Got flags: %#v", flag)
-	}
+	//for _, flag := range stringToFlags(message.AddedF) {
+	//log.Printf("Got flags: %#v", flag)
+	//}
 }
 
 func stringToPeers(in string) (peers []string) {
