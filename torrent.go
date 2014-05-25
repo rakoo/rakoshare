@@ -371,7 +371,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	go ps.peerReader(t.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
-		ps.SendExtensions(t.si.Port, t.m.Size())
+		ps.SendExtensions(t.si.OurExtensions, 0)
 
 		if t.si.HaveTorrent {
 			ps.SendBitfield(t.pieceSet)

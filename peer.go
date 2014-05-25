@@ -150,15 +150,17 @@ func (p *peerState) SendBitfield(bs *Bitset) {
 	p.sendMessage(msg)
 }
 
-func (p *peerState) SendExtensions(port int, metadataSize int) {
+func (p *peerState) SendExtensions(supportedExtensions map[int]string,
+	metadataSize int) {
 
 	handshake := ExtensionHandshake{
-		M: map[string]int{
-			"ut_metadata": 1,
-			"ut_pex":      2,
-		},
+		M:            make(map[string]int, len(supportedExtensions)),
 		V:            "Taipei-Torrent dev",
 		MetadataSize: metadataSize,
+	}
+
+	for i, ext := range supportedExtensions {
+		handshake.M[ext] = i
 	}
 
 	var buf bytes.Buffer
