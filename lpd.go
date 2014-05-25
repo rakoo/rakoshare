@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -81,6 +82,7 @@ func (lpd *Announcer) run() {
 			log.Println("No Infohash")
 			continue
 		}
+		ih = strings.ToLower(ih)
 
 		port := req.Header.Get("Port")
 		if port == "" {
