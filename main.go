@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -78,26 +77,13 @@ func main() {
 
 	log.Println("Starting.")
 
-	// torrentDir and torrentFile
-	user, err := user.Current()
-	if err != nil {
-		log.Fatal("Couldn't get current user: ", err)
-	}
-	torrentDir := filepath.Join(user.HomeDir, ".local", "share", "bitshare")
-	if _, err := os.Stat(torrentDir); os.IsNotExist(err) {
-		err := os.MkdirAll(torrentDir, os.ModeDir|0755)
-		if err != nil {
-			log.Fatal("Couldn't make torrent dir:", err)
-		}
-	}
-
 	// External listener
 	conChan, listenPort, err := listenForPeerConnections()
 	if err != nil {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
 
-	currentSession := NewCurrentSession(torrentDir, listenPort)
+	var currentSession *TorrentSession
 
 	// quitChan
 	quitChan := listenSigInt()
@@ -182,25 +168,4 @@ func listenSigInt() chan os.Signal {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	return c
-}
-
-func NewCurrentSession(bitshareDir string, listenPort int) *TorrentSession {
-	currentFile := filepath.Join(bitshareDir, "current")
-	if _, err := os.Stat(currentFile); err != nil && os.IsNotExist(err) {
-		log.Fatal("No current file!")
-	}
-
-	currentIH, err := ioutil.ReadFile(currentFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	currentTorrent := filepath.Join(bitshareDir, string(currentIH))
-
-	ts, err := NewTorrentSession(currentTorrent, listenPort)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return ts
 }
