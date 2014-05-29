@@ -69,7 +69,21 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 	}
 	go w.watch()
 
-	// Initialization
+	// Initialization, only if there is something in the dir
+	if _, err := os.Stat(watchedDir); err != nil {
+		return
+	}
+
+	dir, err := os.Open(watchedDir)
+	if err != nil {
+		return
+	}
+
+	names, err := dir.Readdirnames(1)
+	if len(names) == 0 || err != nil && err != io.EOF {
+		return
+	}
+
 	ih, err := w.currentTorrent()
 	if err == nil {
 		go func() {
@@ -120,7 +134,6 @@ func (w *Watcher) watch() {
 		if err == errNewFile {
 			// New torrent: block until we completely manage it. We will take
 			// care of other changes in the next run of the loop.
-
 			w.PingNewTorrent <- w.torrentify()
 		} else {
 			log.Println("Error while walking dir:", err)
