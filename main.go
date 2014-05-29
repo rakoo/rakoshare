@@ -114,15 +114,17 @@ mainLoop:
 	for {
 		select {
 		case <-quitChan:
-			err := currentSession.Quit()
-			if err != nil {
-				log.Println("Failed: ", err)
-			} else {
-				log.Println("Done")
+			if currentSession != nil {
+				err := currentSession.Quit()
+				if err != nil {
+					log.Println("Failed: ", err)
+				} else {
+					log.Println("Done")
+				}
 			}
 			break mainLoop
 		case c := <-conChan:
-			if currentSession.Matches(c.infohash) {
+			if currentSession != nil && currentSession.Matches(c.infohash) {
 				currentSession.AcceptNewPeer(c)
 			} else if controlSession.Matches(c.infohash) {
 				controlSession.AcceptNewPeer(c)
@@ -140,6 +142,10 @@ mainLoop:
 			}
 		case ih := <-watcher.PingNewTorrent:
 			controlSession.Broadcast(ih)
+
+			if currentSession != nil {
+				currentSession.Quit()
+			}
 
 			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
 			currentSession, err = NewTorrentSession(torrentFile, listenPort)
