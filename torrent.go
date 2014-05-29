@@ -295,7 +295,7 @@ func (ts *TorrentSession) hintNewPeer(peer string) {
 func (ts *TorrentSession) connectToPeer(peer string) {
 	conn, err := proxyNetDial("tcp", peer)
 	if err != nil {
-		// log.Println("Failed to connect to", peer, err)
+		log.Println("Failed to connect to", peer, err)
 		return
 	}
 
@@ -307,6 +307,7 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 
 	theirheader, err := readHeader(conn)
 	if err != nil {
+		log.Printf("Failed to read header from %s: %s", peer, err)
 		return
 	}
 
@@ -326,7 +327,7 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	// log.Println("Connected to", peer)
+	log.Println("Connected to", peer)
 	ts.AddPeer(btconn)
 }
 
@@ -392,7 +393,6 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 		t.si.ME.Transferring = false
 	}
 
-	log.Println("Closing peer", peer.address)
 	_ = t.removeRequests(peer)
 	peer.Close()
 	delete(t.peers, peer.address)
@@ -432,7 +432,9 @@ func (t *TorrentSession) DoTorrent() {
 	t.heartbeat = make(chan bool, 1)
 	quitDeadlock := make(chan struct{})
 	go t.deadlockDetector(quitDeadlock)
-	log.Println("Fetching torrent.")
+
+	log.Println("[CURRENT] Start")
+
 	rechokeChan := time.Tick(1 * time.Second)
 	verboseChan := time.Tick(10 * time.Second)
 	keepAliveChan := time.Tick(60 * time.Second)

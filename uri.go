@@ -37,7 +37,7 @@ func parseMagnet(s string) (mag Magnet, err error) {
 	}
 	xts, ok := u.Query()["xt"]
 	if !ok {
-		err = errors.New(fmt.Sprintf("Magnet URI missing the 'xt' argument" + s))
+		err = errors.New(fmt.Sprintf("Magnet URI missing the 'xt' argument: %s", s))
 		return
 	}
 

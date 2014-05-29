@@ -165,7 +165,7 @@ func usage() {
 }
 
 func listenSigInt() chan os.Signal {
-	c := make(chan os.Signal, 1)
+	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	return c
 }
