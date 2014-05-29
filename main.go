@@ -135,12 +135,14 @@ mainLoop:
 				log.Println("Err with hex-decoding:", err)
 				break
 			}
-			if currentSession.Matches(string(hexhash)) {
-				currentSession.hintNewPeer(announce.peer)
-			} else if controlSession.Matches(string(hexhash)) {
+			if controlSession.Matches(string(hexhash)) {
 				controlSession.hintNewPeer(announce.peer)
 			}
 		case ih := <-watcher.PingNewTorrent:
+			if ih == controlSession.currentIH {
+				continue
+			}
+
 			controlSession.Broadcast(ih)
 
 			if currentSession != nil {
@@ -153,11 +155,23 @@ mainLoop:
 				log.Fatal("Couldn't start new session: ", err)
 			}
 			go currentSession.DoTorrent()
-			if *useLPD {
-				lpd.Announce(ih)
+			for _, peer := range controlSession.peers {
+				currentSession.hintNewPeer(peer.address)
 			}
-		case ih := <-controlSession.Torrents:
-			log.Printf("Got new metadata from control session: %x\n", ih)
+		case announce := <-controlSession.Torrents:
+			controlSession.Broadcast(announce.infohash)
+
+			if currentSession != nil {
+				currentSession.Quit()
+			}
+
+			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
+			currentSession, err = NewTorrentSession(magnet, listenPort)
+			if err != nil {
+				log.Fatal("Couldn't start new session: ", err)
+			}
+			go currentSession.DoTorrent()
+			currentSession.hintNewPeer(announce.peer)
 		}
 	}
 

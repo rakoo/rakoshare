@@ -52,7 +52,8 @@ func listenForPeerConnections() (conChan chan *btConn, listenPort int, err error
 				log.Println("Listener accept failed:", err)
 				continue
 			}
-			header, err := readHeader(conn)
+			llconn := NewLongLivedconn(conn)
+			header, err := readHeader(llconn)
 			if err != nil {
 				log.Println("Error reading header: ", err)
 				continue
@@ -63,7 +64,7 @@ func listenForPeerConnections() (conChan chan *btConn, listenPort int, err error
 				header:   header,
 				infohash: peersInfoHash,
 				id:       id,
-				conn:     conn,
+				conn:     llconn,
 			}
 		}
 	}()

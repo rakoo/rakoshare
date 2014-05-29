@@ -139,8 +139,6 @@ type TorrentSession struct {
 	dht               *dht.DHT
 	quit              chan bool
 	trackerLessMode   bool
-
-	NewTorrent chan *MetaInfo
 }
 
 func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err error) {
@@ -149,7 +147,6 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 		peerMessageChan: make(chan peerMessage),
 		activePieces:    make(map[int]*ActivePiece),
 		quit:            make(chan bool),
-		NewTorrent:      make(chan *MetaInfo),
 	}
 
 	if useDHT {
@@ -192,13 +189,11 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 }
 
 func (t *TorrentSession) reload(info []byte) {
-	err := bencode.NewDecoder(bytes.NewReader(info)).Decode(t.m.Info)
+	err := bencode.NewDecoder(bytes.NewReader(info)).Decode(&t.m.Info)
 	if err != nil {
 		log.Println("Error when reloading torrent: ", err)
 		return
 	}
-
-	t.NewTorrent <- t.m
 
 	t.load()
 }
@@ -293,7 +288,7 @@ func (ts *TorrentSession) hintNewPeer(peer string) {
 }
 
 func (ts *TorrentSession) connectToPeer(peer string) {
-	conn, err := proxyNetDial("tcp", peer)
+	conn, err := NewTCPConn(peer)
 	if err != nil {
 		log.Println("Failed to connect to", peer, err)
 		return
