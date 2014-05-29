@@ -371,7 +371,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	go ps.peerReader(t.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
-		ps.SendExtensions(t.si.OurExtensions, 0)
+		ps.SendExtensions(t.si.OurExtensions, int64(len(t.m.RawInfo())))
 
 		if t.si.HaveTorrent {
 			ps.SendBitfield(t.pieceSet)
@@ -986,7 +986,7 @@ type ExtensionHandshake struct {
 	Ipv6         string         `bencode:"ipv6,omitempty"`
 	Ipv4         string         `bencode:"ipv4,omitempty"`
 	Reqq         uint16         `bencode:"reqq,omitempty"`
-	MetadataSize int            `bencode:"metadata_size,omitempty"`
+	MetadataSize int64          `bencode:"metadata_size,omitempty"`
 }
 
 func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {

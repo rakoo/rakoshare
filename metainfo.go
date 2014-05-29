@@ -152,6 +152,9 @@ func (m *MetaInfo) RawInfo() (b []byte) {
 	if m.rawInfo != nil {
 		return m.rawInfo
 	}
+	if m.Info == nil {
+		return []byte{}
+	}
 
 	var buf bytes.Buffer
 	err := bencode.NewEncoder(&buf).Encode(m.Info)

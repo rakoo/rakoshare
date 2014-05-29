@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -22,12 +23,22 @@ var (
 	errInvalidType = errors.New("invalid message type")
 )
 
+var (
+	errMetadataMessage = errors.New("Couldn't create metadata message")
+)
+
 type ControlSession struct {
 	ID     ShareID
 	Port   int
 	PeerID string
 
-	Torrents chan string
+	// A channel of all announces we get from peers.
+	// If the announce is for the same torrent as the current one, then it
+	// is not broadcasted in this channel.
+	Torrents chan Announce
+
+	// The current data torrent
+	currentIH string
 
 	ourExtensions   map[int]string
 	header          []byte
@@ -54,7 +65,7 @@ func NewControlSession(id ShareID, listenPort int) (*ControlSession, error) {
 		Port:            listenPort,
 		PeerID:          sid[:20],
 		ID:              id,
-		Torrents:        make(chan string),
+		Torrents:        make(chan Announce),
 		dht:             dhtNode,
 		peerMessageChan: make(chan peerMessage),
 		quit:            make(chan struct{}),
@@ -184,7 +195,6 @@ func (cs *ControlSession) Run() {
 		case pm := <-cs.peerMessageChan:
 			peer, message := pm.peer, pm.message
 			peer.lastReadTime = time.Now()
-			log.Printf("Received message from %s\n", peer.address)
 			err2 := cs.DoMessage(peer, message)
 			if err2 != nil {
 				if err2 != io.EOF {
@@ -242,7 +252,7 @@ func (cs *ControlSession) makeClientStatusReport(event string) ClientStatusRepor
 }
 
 func (cs *ControlSession) connectToPeer(peer string) {
-	conn, err := proxyNetDial("tcp", peer)
+	conn, err := NewTCPConn(peer)
 	if err != nil {
 		// log.Println("Failed to connect to", peer, err)
 		return
@@ -332,7 +342,6 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 }
 
 func (cs *ControlSession) ClosePeer(peer *peerState) {
-	log.Println("Closing peer", peer.address)
 	peer.Close()
 	delete(cs.peers, peer.address)
 }
@@ -370,6 +379,16 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 	for name, code := range h.M {
 		p.theirExtensions[name] = code
 	}
+
+	// Now that handshake is done and we know their extension, send the
+	// current ih message
+	message, err := cs.metadataMessage(cs.currentIH, p)
+	if err != nil {
+		log.Println(err)
+	} else {
+		p.sendMessage(message)
+	}
+
 	return
 }
 
@@ -391,7 +410,32 @@ func (cs *ControlSession) DoOther(msg []byte, p *peerState) (err error) {
 }
 
 type MetaMessage struct {
+	Info NewInfo `bencode:"info"`
+
+	// The port we are listening on
+	Port int64 `bencode:"port"`
+
+	// The signature of the info dict
+	Sig string `bencode:"sig"`
+}
+
+type NewInfo struct {
 	InfoHash string `bencode:"infohash"`
+	Rev      string `bencode:"rev"`
+}
+
+func NewMetaMessage(port int64, ih, privkey string) (mm MetaMessage) {
+	mm = MetaMessage{
+		Info: NewInfo{
+			InfoHash: ih,
+		},
+		Port: port,
+	}
+
+	if privkey != "" {
+	}
+
+	return
 }
 
 func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
@@ -400,11 +444,20 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	if err != nil {
 		return
 	}
-	if message.InfoHash == "" {
+	if message.Info.InfoHash == "" || message.Port == 0 {
 		return
 	}
 
-	cs.Torrents <- message.InfoHash
+	if cs.currentIH != message.Info.InfoHash {
+		// take his IP addr, use the advertised port
+		ip := p.conn.RemoteAddr().(*net.TCPAddr).IP.String()
+		port := strconv.Itoa(int(message.Port))
+
+		cs.Torrents <- Announce{
+			infohash: message.Info.InfoHash,
+			peer:     ip + ":" + port,
+		}
+	}
 	return
 }
 
@@ -417,22 +470,33 @@ func (cs *ControlSession) Matches(ih string) bool {
 }
 
 func (cs *ControlSession) Broadcast(ih string) {
+	cs.currentIH = ih
 	for _, ps := range cs.peers {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}
 
-		var resp bytes.Buffer
-		resp.WriteByte(EXTENSION)
-		resp.WriteByte(byte(ps.theirExtensions["bs_metadata"]))
-
-		msg := MetaMessage{InfoHash: ih}
-		err := bencode.NewEncoder(&resp).Encode(msg)
+		message, err := cs.metadataMessage(ih, ps)
 		if err != nil {
-			log.Println("Couldn't encode msg: ", err)
-			continue
+			log.Println(err)
+		} else {
+			ps.sendMessage(message)
 		}
-
-		ps.sendMessage(resp.Bytes())
 	}
+}
+
+func (cs *ControlSession) metadataMessage(ih string, ps *peerState) ([]byte, error) {
+	var resp bytes.Buffer
+	resp.WriteByte(EXTENSION)
+	resp.WriteByte(byte(ps.theirExtensions["bs_metadata"]))
+
+	privkey, _ := cs.ID.ReadWriteID()
+	msg := NewMetaMessage(int64(cs.Port), ih, privkey)
+	err := bencode.NewEncoder(&resp).Encode(msg)
+	if err != nil {
+		log.Println("Couldn't encode msg: ", err)
+		return nil, errMetadataMessage
+	}
+
+	return resp.Bytes(), nil
 }
