@@ -46,14 +46,7 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 		log.Fatal("Couldn't stat current file: ", err)
 	}
 	if st != nil {
-		current, err := ioutil.ReadFile(currentFile)
-		if err == nil {
-			currentTorrent := filepath.Join(bitshareDir, string(current))
-			st2, err := os.Stat(currentTorrent)
-			if err == nil {
-				lastModTime = st2.ModTime()
-			}
-		}
+		lastModTime = st.ModTime()
 	}
 
 	err = clean(bitshareDir)
@@ -96,21 +89,27 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 
 func (w *Watcher) currentTorrent() (ih string, err error) {
 	currentFile := filepath.Join(w.bitshareDir, "current")
-	st, err := os.Stat(currentFile)
+	current, err := os.Open(currentFile)
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatal("Couldn't stat current file: ", err)
-	}
-	if st == nil {
+	} else if os.IsNotExist(err) {
 		return
 	}
 
-	ihbytes, err := ioutil.ReadFile(currentFile)
-	if err != nil {
+	var mess IHMessage
+	err = bencode.NewDecoder(current).Decode(&mess)
+	if err == nil {
+		ih1, err := hex.DecodeString(mess.Info.InfoHash)
+		if err == nil {
+			return string(ih1), nil
+		}
+	} else if err != io.EOF {
+		log.Printf("Error when decoding \"current\": %s\n", err)
 		return
 	}
-	ih1, err := hex.DecodeString(string(ihbytes))
-	ih = string(ih1)
-	return
+
+	// No torrent but there is content. Calculate manually.
+	return w.torrentify(), nil
 }
 
 func (w *Watcher) watch() {
@@ -205,14 +204,6 @@ func (w *Watcher) torrentify() (ih string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Overwrite "current" file with current value
-	currentFile, err := os.Create(filepath.Join(w.bitshareDir, "current"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer currentFile.Close()
-	currentFile.WriteString(ihhex)
 
 	// Update last mod time
 	st, err := os.Stat(currentTorrent)

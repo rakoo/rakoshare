@@ -98,7 +98,8 @@ func main() {
 	}
 
 	// Control session
-	controlSession, err := NewControlSession(shareID, listenPort)
+	controlSession, err := NewControlSession(shareID, listenPort,
+		bitshareDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -139,11 +140,11 @@ mainLoop:
 				controlSession.hintNewPeer(announce.peer)
 			}
 		case ih := <-watcher.PingNewTorrent:
-			if ih == controlSession.currentIH {
+			if ih == controlSession.currentIH && currentSession != nil {
 				continue
 			}
 
-			controlSession.Broadcast(ih)
+			controlSession.SetCurrent(ih)
 
 			if currentSession != nil {
 				currentSession.Quit()
@@ -159,7 +160,7 @@ mainLoop:
 				currentSession.hintNewPeer(peer.address)
 			}
 		case announce := <-controlSession.Torrents:
-			controlSession.Broadcast(announce.infohash)
+			controlSession.SetCurrent(announce.infohash)
 
 			if currentSession != nil {
 				currentSession.Quit()

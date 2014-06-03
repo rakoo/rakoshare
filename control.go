@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,7 +11,10 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nictuku/dht"
@@ -39,6 +43,7 @@ type ControlSession struct {
 
 	// The current data torrent
 	currentIH string
+	rev       string
 
 	ourExtensions   map[int]string
 	header          []byte
@@ -46,9 +51,11 @@ type ControlSession struct {
 	dht             *dht.DHT
 	peers           map[string]*peerState
 	peerMessageChan chan peerMessage
+
+	bitshareDir string
 }
 
-func NewControlSession(id ShareID, listenPort int) (*ControlSession, error) {
+func NewControlSession(id ShareID, listenPort int, bitshareDir string) (*ControlSession, error) {
 	sid := "-tt" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 
 	// TODO: UPnP UDP port mapping.
@@ -59,6 +66,27 @@ func NewControlSession(id ShareID, listenPort int) (*ControlSession, error) {
 	dhtNode, err := dht.New(cfg)
 	if err != nil {
 		log.Fatal("DHT node creation error", err)
+	}
+
+	current, err := os.Open(path.Join(bitshareDir, "current"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	var currentIhMessage IHMessage
+	err = bencode.NewDecoder(current).Decode(&currentIhMessage)
+	if err != nil {
+		log.Printf("Couldn't decode current message, starting from scratch: %s\n", err)
+	}
+
+	rev := "0-"
+	if currentIhMessage.Info.Rev != "" {
+		parts := strings.Split(currentIhMessage.Info.Rev, "2")
+		if len(parts) == 2 {
+			if _, err := strconv.Atoi(parts[0]); err == nil {
+				rev = currentIhMessage.Info.Rev
+			}
+		}
 	}
 
 	cs := &ControlSession{
@@ -74,6 +102,11 @@ func NewControlSession(id ShareID, listenPort int) (*ControlSession, error) {
 			2: "bs_metadata",
 		},
 		peers: make(map[string]*peerState),
+
+		currentIH: currentIhMessage.Info.InfoHash,
+		rev:       rev,
+
+		bitshareDir: bitshareDir,
 	}
 	go cs.dht.Run()
 	cs.dht.PeersRequest(cs.ID.PublicID(), true)
@@ -382,7 +415,7 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 
 	// Now that handshake is done and we know their extension, send the
 	// current ih message
-	message, err := cs.metadataMessage(cs.currentIH, p)
+	message, err := cs.ihMessage(cs.currentIH, p)
 	if err != nil {
 		log.Println(err)
 	} else {
@@ -409,7 +442,7 @@ func (cs *ControlSession) DoOther(msg []byte, p *peerState) (err error) {
 	return
 }
 
-type MetaMessage struct {
+type IHMessage struct {
 	Info NewInfo `bencode:"info"`
 
 	// The port we are listening on
@@ -421,13 +454,17 @@ type MetaMessage struct {
 
 type NewInfo struct {
 	InfoHash string `bencode:"infohash"`
-	Rev      string `bencode:"rev"`
+
+	// The revision, ala CouchDB
+	// ie <counter>-<hash>
+	Rev string `bencode:"rev"`
 }
 
-func NewMetaMessage(port int64, ih, privkey string) (mm MetaMessage) {
-	mm = MetaMessage{
+func NewIHMessage(port int64, ih, privkey, rev string) (mm IHMessage) {
+	mm = IHMessage{
 		Info: NewInfo{
 			InfoHash: ih,
+			Rev:      rev,
 		},
 		Port: port,
 	}
@@ -439,7 +476,7 @@ func NewMetaMessage(port int64, ih, privkey string) (mm MetaMessage) {
 }
 
 func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
-	var message MetaMessage
+	var message IHMessage
 	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&message)
 	if err != nil {
 		return
@@ -469,14 +506,43 @@ func (cs *ControlSession) Matches(ih string) bool {
 	return cs.ID.PublicID() == hex.EncodeToString([]byte(ih))
 }
 
-func (cs *ControlSession) Broadcast(ih string) {
+func (cs *ControlSession) SetCurrent(ih string) {
 	cs.currentIH = ih
+
+	parts := strings.Split(cs.rev, "-")
+	if len(parts) != 2 {
+		log.Printf("Invalid rev: %s\n", cs.rev)
+		parts = []string{"0", ""}
+	}
+
+	counter, err := strconv.Atoi(parts[0])
+	if err != nil {
+		counter = 0
+	}
+	newCounter := strconv.Itoa(counter + 1)
+
+	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(ih+parts[1])))
+
+	// Overwrite "current" file with current value
+	currentFile, err := os.Create(filepath.Join(cs.bitshareDir, "current"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer currentFile.Close()
+
+	mess := NewIHMessage(int64(cs.Port), cs.currentIH, "", cs.rev)
+	err = bencode.NewEncoder(currentFile).Encode(mess)
+
+	cs.broadcast(ih)
+}
+
+func (cs *ControlSession) broadcast(ih string) {
 	for _, ps := range cs.peers {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}
 
-		message, err := cs.metadataMessage(ih, ps)
+		message, err := cs.ihMessage(ih, ps)
 		if err != nil {
 			log.Println(err)
 		} else {
@@ -485,13 +551,13 @@ func (cs *ControlSession) Broadcast(ih string) {
 	}
 }
 
-func (cs *ControlSession) metadataMessage(ih string, ps *peerState) ([]byte, error) {
+func (cs *ControlSession) ihMessage(ih string, ps *peerState) ([]byte, error) {
 	var resp bytes.Buffer
 	resp.WriteByte(EXTENSION)
 	resp.WriteByte(byte(ps.theirExtensions["bs_metadata"]))
 
 	privkey, _ := cs.ID.ReadWriteID()
-	msg := NewMetaMessage(int64(cs.Port), ih, privkey)
+	msg := NewIHMessage(int64(cs.Port), ih, privkey, cs.rev)
 	err := bencode.NewEncoder(&resp).Encode(msg)
 	if err != nil {
 		log.Println("Couldn't encode msg: ", err)
