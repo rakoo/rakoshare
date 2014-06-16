@@ -41,6 +41,10 @@ type ControlSession struct {
 	// is not broadcasted in this channel.
 	Torrents chan Announce
 
+	// A channel of all new peers we acknowledge, in a ip:port format
+	// The port is the one advertised
+	NewPeers chan string
+
 	// The current data torrent
 	currentIH string
 	rev       string
@@ -52,10 +56,10 @@ type ControlSession struct {
 	peers           map[string]*peerState
 	peerMessageChan chan peerMessage
 
-	bitshareDir string
+	workDir string
 }
 
-func NewControlSession(id ShareID, listenPort int, bitshareDir string) (*ControlSession, error) {
+func NewControlSession(id ShareID, listenPort int, workDir string) (*ControlSession, error) {
 	sid := "-tt" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 
 	// TODO: UPnP UDP port mapping.
@@ -68,7 +72,7 @@ func NewControlSession(id ShareID, listenPort int, bitshareDir string) (*Control
 		log.Fatal("DHT node creation error", err)
 	}
 
-	current, err := os.Open(path.Join(bitshareDir, "current"))
+	current, err := os.Open(path.Join(workDir, "current"))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -94,6 +98,7 @@ func NewControlSession(id ShareID, listenPort int, bitshareDir string) (*Control
 		PeerID:          sid[:20],
 		ID:              id,
 		Torrents:        make(chan Announce),
+		NewPeers:        make(chan string),
 		dht:             dhtNode,
 		peerMessageChan: make(chan peerMessage),
 		quit:            make(chan struct{}),
@@ -106,7 +111,7 @@ func NewControlSession(id ShareID, listenPort int, bitshareDir string) (*Control
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
 
-		bitshareDir: bitshareDir,
+		workDir: workDir,
 	}
 	go cs.dht.Run()
 	cs.dht.PeersRequest(cs.ID.PublicID(), true)
@@ -194,6 +199,7 @@ func (cs *ControlSession) Run() {
 					peer = dht.DecodePeerAddress(peer)
 					if _, ok := cs.peers[peer]; !ok {
 						newPeerCount++
+						cs.NewPeers <- peer
 						go cs.connectToPeer(peer)
 					}
 				}
@@ -309,7 +315,6 @@ func (cs *ControlSession) connectToPeer(peer string) {
 
 	// If it's us, we don't need to continue
 	if id == cs.PeerID {
-		log.Println("Tried to connecting to ourselves. Closing.")
 		conn.Close()
 		return
 	}
@@ -331,9 +336,16 @@ func (cs *ControlSession) hintNewPeer(peer string) {
 }
 
 func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
+	// If it's us, we don't need to continue
+	if btconn.id == cs.PeerID {
+		btconn.conn.Close()
+		return
+	}
+
 	_, err := btconn.conn.Write(cs.Header())
 	if err != nil {
 		log.Printf("Error writing header: %s\n", err)
+		btconn.conn.Close()
 		return
 	}
 	cs.AddPeer(btconn)
@@ -349,7 +361,6 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	// log.Println("Adding peer", peer)
 	if len(cs.peers) >= MAX_NUM_PEERS {
 		log.Println("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
@@ -485,17 +496,49 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 		return
 	}
 
+	if cs.isNewerThan(message.Info.Rev) {
+		return
+	}
+
+	// take his IP addr, use the advertised port
+	ip := p.conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	port := strconv.Itoa(int(message.Port))
+	peer := ip + ":" + port
+
+	go func() {
+		cs.NewPeers <- peer
+	}()
+
 	if cs.currentIH != message.Info.InfoHash {
-		// take his IP addr, use the advertised port
-		ip := p.conn.RemoteAddr().(*net.TCPAddr).IP.String()
-		port := strconv.Itoa(int(message.Port))
 
 		cs.Torrents <- Announce{
 			infohash: message.Info.InfoHash,
-			peer:     ip + ":" + port,
+			peer:     peer,
 		}
 	}
 	return
+}
+
+func (cs *ControlSession) isNewerThan(rev string) bool {
+	remoteParts := strings.Split(rev, "-")
+	if len(remoteParts) != 2 {
+		return true
+	}
+	remoteCounter, err := strconv.Atoi(remoteParts[0])
+	if err != nil {
+		return true
+	}
+
+	localParts := strings.Split(cs.rev, "-")
+	if len(localParts) != 2 {
+		return true
+	}
+	localCounter, err := strconv.Atoi(localParts[0])
+	if err != nil {
+		return true
+	}
+
+	return localCounter > remoteCounter
 }
 
 func (cs *ControlSession) DoPex(msg []byte, p *peerState) (err error) {
@@ -524,7 +567,7 @@ func (cs *ControlSession) SetCurrent(ih string) {
 	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(ih+parts[1])))
 
 	// Overwrite "current" file with current value
-	currentFile, err := os.Create(filepath.Join(cs.bitshareDir, "current"))
+	currentFile, err := os.Create(filepath.Join(cs.workDir, "current"))
 	if err != nil {
 		log.Fatal(err)
 	}

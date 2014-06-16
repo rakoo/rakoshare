@@ -25,14 +25,20 @@ var (
 
 type Watcher struct {
 	lastModTime time.Time
-	bitshareDir string
+	workDir     string
 	watchedDir  string
 	lock        sync.Mutex
 
 	PingNewTorrent chan string
 }
 
-func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
+func NewWatcher(workDir, watchedDir string) (w *Watcher) {
+
+	if _, err := os.Stat(workDir); err != nil {
+		if os.IsNotExist(err) {
+			os.MkdirAll(workDir, os.ModeDir|0755)
+		}
+	}
 
 	// Lastmodtime
 	// If we have a current torrent, it's its mod time
@@ -40,7 +46,7 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 	defaultNow := time.Now()
 	lastModTime := defaultNow
 
-	currentFile := filepath.Join(bitshareDir, "current")
+	currentFile := filepath.Join(workDir, "current")
 	st, err := os.Stat(currentFile)
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatal("Couldn't stat current file: ", err)
@@ -49,14 +55,14 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 		lastModTime = st.ModTime()
 	}
 
-	err = clean(bitshareDir)
+	err = clean(workDir)
 	if err != nil {
-		log.Fatal("Couldn't clean bitshare dir:", err)
+		log.Fatal("Couldn't clean workDir dir:", err)
 	}
 
 	w = &Watcher{
 		lastModTime:    lastModTime,
-		bitshareDir:    bitshareDir,
+		workDir:        workDir,
 		watchedDir:     watchedDir,
 		PingNewTorrent: make(chan string),
 	}
@@ -88,7 +94,7 @@ func NewWatcher(bitshareDir, watchedDir string) (w *Watcher) {
 }
 
 func (w *Watcher) currentTorrent() (ih string, err error) {
-	currentFile := filepath.Join(w.bitshareDir, "current")
+	currentFile := filepath.Join(w.workDir, "current")
 	current, err := os.Open(currentFile)
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatal("Couldn't stat current file: ", err)
@@ -144,7 +150,7 @@ func (w *Watcher) torrentify() (ih string) {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
-	tmpFile, err := ioutil.TempFile(w.bitshareDir, "current.")
+	tmpFile, err := ioutil.TempFile(w.workDir, "current.")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -194,7 +200,7 @@ func (w *Watcher) torrentify() (ih string) {
 	ihhex := fmt.Sprintf("%x", ih)
 
 	// Move tmp file to final file (with infohash as name)
-	currentTorrent := filepath.Join(w.bitshareDir, ihhex)
+	currentTorrent := filepath.Join(w.workDir, ihhex)
 	if st, err := os.Stat(currentTorrent); st != nil {
 		if err = os.Remove(currentTorrent); err != nil {
 			log.Fatal(err)

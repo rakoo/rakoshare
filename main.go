@@ -55,13 +55,13 @@ func main() {
 		}(*memprofile)
 	}
 
-	// Bitshare dir
+	// Working directory, where all transient stuff happens
 	u, err := user.Current()
 	if err != nil {
 		log.Fatal("Couldn't watch dir: ", err)
 	}
-	pathArgs := []string{u.HomeDir, ".local", "share", "bitshare"}
-	bitshareDir := filepath.Join(pathArgs...)
+	pathArgs := []string{u.HomeDir, ".local", "share", "rakoshare"}
+	workDir := filepath.Join(pathArgs...)
 
 	// Watcher
 	if fileDir == "." {
@@ -73,7 +73,7 @@ func main() {
 		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
 		os.Exit(1)
 	}
-	watcher := NewWatcher(bitshareDir, filepath.Clean(fileDir))
+	watcher := NewWatcher(workDir, filepath.Clean(fileDir))
 
 	log.Println("Starting.")
 
@@ -83,7 +83,7 @@ func main() {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
 
-	var currentSession *TorrentSession
+	var currentSession TorrentSessionI = EmptyTorrent{}
 
 	// quitChan
 	quitChan := listenSigInt()
@@ -99,7 +99,7 @@ func main() {
 
 	// Control session
 	controlSession, err := NewControlSession(shareID, listenPort,
-		bitshareDir)
+		workDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,17 +115,15 @@ mainLoop:
 	for {
 		select {
 		case <-quitChan:
-			if currentSession != nil {
-				err := currentSession.Quit()
-				if err != nil {
-					log.Println("Failed: ", err)
-				} else {
-					log.Println("Done")
-				}
+			err := currentSession.Quit()
+			if err != nil {
+				log.Println("Failed: ", err)
+			} else {
+				log.Println("Done")
 			}
 			break mainLoop
 		case c := <-conChan:
-			if currentSession != nil && currentSession.Matches(c.infohash) {
+			if currentSession.Matches(c.infohash) {
 				currentSession.AcceptNewPeer(c)
 			} else if controlSession.Matches(c.infohash) {
 				controlSession.AcceptNewPeer(c)
@@ -140,17 +138,15 @@ mainLoop:
 				controlSession.hintNewPeer(announce.peer)
 			}
 		case ih := <-watcher.PingNewTorrent:
-			if ih == controlSession.currentIH && currentSession != nil {
+			if ih == controlSession.currentIH && !currentSession.IsEmpty() {
 				continue
 			}
 
 			controlSession.SetCurrent(ih)
 
-			if currentSession != nil {
-				currentSession.Quit()
-			}
+			currentSession.Quit()
 
-			torrentFile := filepath.Join(bitshareDir, fmt.Sprintf("%x", ih))
+			torrentFile := filepath.Join(workDir, fmt.Sprintf("%x", ih))
 			currentSession, err = NewTorrentSession(torrentFile, listenPort)
 			if err != nil {
 				log.Fatal("Couldn't start new session: ", err)
@@ -162,9 +158,7 @@ mainLoop:
 		case announce := <-controlSession.Torrents:
 			controlSession.SetCurrent(announce.infohash)
 
-			if currentSession != nil {
-				currentSession.Quit()
-			}
+			currentSession.Quit()
 
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
 			currentSession, err = NewTorrentSession(magnet, listenPort)
@@ -173,10 +167,29 @@ mainLoop:
 			}
 			go currentSession.DoTorrent()
 			currentSession.hintNewPeer(announce.peer)
+		case peer := <-controlSession.NewPeers:
+			if currentSession.IsEmpty() {
+				magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", controlSession.currentIH)
+				currentSession, err = NewTorrentSession(magnet, listenPort)
+				if err != nil {
+					log.Fatal("Couldn't start new session: ", err)
+				}
+				go currentSession.DoTorrent()
+			}
+			currentSession.hintNewPeer(peer)
 		}
 	}
 
 }
+
+type EmptyTorrent struct{}
+
+func (et EmptyTorrent) Quit() error               { return nil }
+func (et EmptyTorrent) Matches(ih string) bool    { return false }
+func (et EmptyTorrent) AcceptNewPeer(btc *btConn) {}
+func (et EmptyTorrent) DoTorrent()                {}
+func (et EmptyTorrent) hintNewPeer(peer string)   {}
+func (et EmptyTorrent) IsEmpty() bool             { return true }
 
 func usage() {
 	log.Printf("usage: Taipei-Torrent [options] (torrent-file | torrent-url)")

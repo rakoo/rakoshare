@@ -119,6 +119,15 @@ func (a *ActivePiece) isComplete() bool {
 	return true
 }
 
+type TorrentSessionI interface {
+	IsEmpty() bool
+	Quit() error
+	Matches(ih string) bool
+	AcceptNewPeer(btc *btConn)
+	DoTorrent()
+	hintNewPeer(peer string)
+}
+
 type TorrentSession struct {
 	m                 *MetaInfo
 	si                *SessionInfo
@@ -252,6 +261,10 @@ func (t *TorrentSession) load() {
 	t.si.HaveTorrent = true
 }
 
+func (t *TorrentSession) IsEmpty() bool {
+	return false
+}
+
 func (t *TorrentSession) fetchTrackerInfo(event string) {
 	m, si := t.m, t.si
 	log.Println("Stats: Uploaded", si.Uploaded, "Downloaded", si.Downloaded, "Left", si.Left)
@@ -311,7 +324,6 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 
 	// If it's us, we don't need to continue
 	if id == ts.si.PeerId {
-		log.Println("Tried to connecting to ourselves. Closing.")
 		conn.Close()
 		return
 	}
@@ -322,7 +334,7 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	log.Println("Connected to", peer)
+	// log.Println("Connected to", peer)
 	ts.AddPeer(btconn)
 }
 
