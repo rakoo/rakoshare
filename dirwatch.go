@@ -98,20 +98,18 @@ func (w *Watcher) currentTorrent() (ih string, err error) {
 	current, err := os.Open(currentFile)
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatal("Couldn't stat current file: ", err)
-	} else if os.IsNotExist(err) {
-		return
-	}
-
-	var mess IHMessage
-	err = bencode.NewDecoder(current).Decode(&mess)
-	if err == nil {
-		ih1, err := hex.DecodeString(mess.Info.InfoHash)
+	} else if err == nil {
+		var mess IHMessage
+		err = bencode.NewDecoder(current).Decode(&mess)
 		if err == nil {
-			return string(ih1), nil
+			ih1, err := hex.DecodeString(mess.Info.InfoHash)
+			if err == nil {
+				return string(ih1), nil
+			}
+		} else if err != io.EOF {
+			log.Printf("Error when decoding \"current\": %s\n", err)
+			return
 		}
-	} else if err != io.EOF {
-		log.Printf("Error when decoding \"current\": %s\n", err)
-		return
 	}
 
 	// No torrent but there is content. Calculate manually.
