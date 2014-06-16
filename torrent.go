@@ -120,6 +120,8 @@ func (a *ActivePiece) isComplete() bool {
 }
 
 type TorrentSessionI interface {
+	NewMetaInfo() chan *MetaInfo
+
 	IsEmpty() bool
 	Quit() error
 	Matches(ih string) bool
@@ -148,6 +150,8 @@ type TorrentSession struct {
 	dht               *dht.DHT
 	quit              chan bool
 	trackerLessMode   bool
+
+	miChan chan *MetaInfo
 }
 
 func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err error) {
@@ -156,6 +160,7 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 		peerMessageChan: make(chan peerMessage),
 		activePieces:    make(map[int]*ActivePiece),
 		quit:            make(chan bool),
+		miChan:          make(chan *MetaInfo),
 	}
 
 	if useDHT {
@@ -197,6 +202,10 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 	return t, err
 }
 
+func (t *TorrentSession) NewMetaInfo() chan *MetaInfo {
+	return t.miChan
+}
+
 func (t *TorrentSession) reload(info []byte) {
 	err := bencode.NewDecoder(bytes.NewReader(info)).Decode(&t.m.Info)
 	if err != nil {
@@ -204,6 +213,7 @@ func (t *TorrentSession) reload(info []byte) {
 		return
 	}
 
+	t.miChan <- t.m
 	t.load()
 }
 
@@ -375,8 +385,6 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	}
 
 	t.peers[peer] = ps
-	go ps.peerWriter(t.peerMessageChan)
-	go ps.peerReader(t.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(t.si.OurExtensions, int64(len(t.m.RawInfo())))
@@ -393,6 +401,12 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 		// a BITFIELD message as a first message
 		ps.have = NewBitset(t.totalPieces)
 	}
+
+	// Note that we need to launch these at the end of initialisation, so
+	// we are sure that the message we buffered previously will be the
+	// first to be sent.
+	go ps.peerWriter(t.peerMessageChan)
+	go ps.peerReader(t.peerMessageChan)
 }
 
 func (t *TorrentSession) ClosePeer(peer *peerState) {
@@ -634,7 +648,7 @@ func (t *TorrentSession) ChoosePiece(p *peerState) (piece int) {
 
 func (t *TorrentSession) checkRange(p *peerState, start, end int) (piece int) {
 	for i := start; i < end; i++ {
-		if (!t.pieceSet.IsSet(i)) && p.have.IsSet(i) {
+		if !t.pieceSet.IsSet(i) && p.have.IsSet(i) {
 			if _, ok := t.activePieces[i]; !ok {
 				return i
 			}
@@ -888,6 +902,15 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		}
 		t.checkInteresting(p)
 		p.can_receive_bitfield = false
+
+		if p.peer_choking == false {
+			for i := 0; i < MAX_OUR_REQUESTS; i++ {
+				err = t.RequestBlock(p)
+				if err != nil {
+					return
+				}
+			}
+		}
 	case REQUEST:
 		// log.Println("request", p.address)
 		if len(message) != 13 {

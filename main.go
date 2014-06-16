@@ -149,7 +149,7 @@ mainLoop:
 			torrentFile := filepath.Join(workDir, fmt.Sprintf("%x", ih))
 			currentSession, err = NewTorrentSession(torrentFile, listenPort)
 			if err != nil {
-				log.Fatal("Couldn't start new session: ", err)
+				log.Fatal("Couldn't start new session from watched dir: ", err)
 			}
 			go currentSession.DoTorrent()
 			for _, peer := range controlSession.peers {
@@ -163,33 +163,37 @@ mainLoop:
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
 			currentSession, err = NewTorrentSession(magnet, listenPort)
 			if err != nil {
-				log.Fatal("Couldn't start new session: ", err)
+				log.Fatal("Couldn't start new session from announce: ", err)
 			}
 			go currentSession.DoTorrent()
 			currentSession.hintNewPeer(announce.peer)
 		case peer := <-controlSession.NewPeers:
 			if currentSession.IsEmpty() {
 				magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", controlSession.currentIH)
-				currentSession, err = NewTorrentSession(magnet, listenPort)
+				tentativeSession, err := NewTorrentSession(magnet, listenPort)
 				if err != nil {
-					log.Fatal("Couldn't start new session: ", err)
+					log.Printf("Couldn't start new session with new peer: %s\n", err)
+					continue
 				}
+				currentSession = tentativeSession
 				go currentSession.DoTorrent()
 			}
 			currentSession.hintNewPeer(peer)
+		case meta := <-currentSession.NewMetaInfo():
+			watcher.saveMetainfo(meta)
 		}
 	}
-
 }
 
 type EmptyTorrent struct{}
 
-func (et EmptyTorrent) Quit() error               { return nil }
-func (et EmptyTorrent) Matches(ih string) bool    { return false }
-func (et EmptyTorrent) AcceptNewPeer(btc *btConn) {}
-func (et EmptyTorrent) DoTorrent()                {}
-func (et EmptyTorrent) hintNewPeer(peer string)   {}
-func (et EmptyTorrent) IsEmpty() bool             { return true }
+func (et EmptyTorrent) Quit() error                 { return nil }
+func (et EmptyTorrent) Matches(ih string) bool      { return false }
+func (et EmptyTorrent) AcceptNewPeer(btc *btConn)   {}
+func (et EmptyTorrent) DoTorrent()                  {}
+func (et EmptyTorrent) hintNewPeer(peer string)     {}
+func (et EmptyTorrent) IsEmpty() bool               { return true }
+func (et EmptyTorrent) NewMetaInfo() chan *MetaInfo { return nil }
 
 func usage() {
 	log.Printf("usage: Taipei-Torrent [options] (torrent-file | torrent-url)")

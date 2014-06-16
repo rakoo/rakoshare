@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -102,10 +101,7 @@ func (w *Watcher) currentTorrent() (ih string, err error) {
 		var mess IHMessage
 		err = bencode.NewDecoder(current).Decode(&mess)
 		if err == nil {
-			ih1, err := hex.DecodeString(mess.Info.InfoHash)
-			if err == nil {
-				return string(ih1), nil
-			}
+			return mess.Info.InfoHash, nil
 		} else if err != io.EOF {
 			log.Printf("Error when decoding \"current\": %s\n", err)
 			return
@@ -148,6 +144,18 @@ func (w *Watcher) torrentify() (ih string) {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
+	meta, err := createMeta(w.watchedDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	w.saveMetainfo(meta)
+
+	return meta.InfoHash
+}
+
+func (w *Watcher) saveMetainfo(meta *MetaInfo) {
+
 	tmpFile, err := ioutil.TempFile(w.workDir, "current.")
 	if err != nil {
 		log.Fatal(err)
@@ -163,11 +171,7 @@ func (w *Watcher) torrentify() (ih string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	meta, err := createMeta(w.watchedDir)
-	if err != nil {
-		log.Fatal(err)
-	}
+	ihhex := fmt.Sprintf("%x", meta.InfoHash)
 
 	f, err := os.Create(tmpFile.Name())
 	if err != nil {
@@ -178,24 +182,6 @@ func (w *Watcher) torrentify() (ih string) {
 		log.Fatal("Couldn't create torrent: ", err)
 	}
 	f.Close()
-
-	// If resulting file is empty, we have an empty fileDir. Torrents
-	// will come from CouchDB.
-	st1, err := os.Stat(tmpFile.Name())
-	if err != nil {
-		log.Fatal(err)
-	}
-	if st1.Size() == 0 {
-		return
-	}
-
-	// Get infohash
-	m, err := NewMetaInfo(tmpFile.Name())
-	if err != nil {
-		log.Fatal(err)
-	}
-	ih = m.InfoHash
-	ihhex := fmt.Sprintf("%x", ih)
 
 	// Move tmp file to final file (with infohash as name)
 	currentTorrent := filepath.Join(w.workDir, ihhex)

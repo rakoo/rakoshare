@@ -199,7 +199,6 @@ func (cs *ControlSession) Run() {
 					peer = dht.DecodePeerAddress(peer)
 					if _, ok := cs.peers[peer]; !ok {
 						newPeerCount++
-						cs.NewPeers <- peer
 						go cs.connectToPeer(peer)
 					}
 				}
@@ -327,6 +326,8 @@ func (cs *ControlSession) connectToPeer(peer string) {
 	}
 	// log.Println("Connected to", peer)
 	cs.AddPeer(btconn)
+
+	cs.NewPeers <- peer
 }
 
 func (cs *ControlSession) hintNewPeer(peer string) {
