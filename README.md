@@ -1,60 +1,87 @@
-Taipei Torrent
-==============
+Rakoshare
+=========
 
-This is a simple command-line-interface BitTorrent client coded in the go
-programming language.
+Rakoshare is a sharing tool to synchronize a folder on multiple
+computers with no configuration.
 
-FAQ:
-----
+It was inspired by Bittorrent Sync and aims to be an Open Source
+alternative. Internally it reuses the Bittorrent protocol to build a
+more dynamic protocol.
 
-Q: Why call it Taipei Torrent?
-
-A: I (jackpal) started writing it while visiting Taipei, Taiwan
-
-Q: What is the license?
-
-A: See the LICENSE file.
+Rakoshare is forked off of
+[Taipei-Torrent](https://github.com/jackpal/Taipei-Torrent), a pure go
+Bittorrent application.
 
 Current Status
 --------------
 
-Tested on Windows, Linux and Mac OSX.
+Unstable. Anything, both in the implementation or the protocol, can
+change at any time (although the general idea should remain the same)
+
+Rakoshare might currently eat your data if you're not cautious.
+
+Tested on Linux.
 
 Development Roadmap
 -------------------
 
-+  Implement choke/unchoke logic
-+  Full UPnP support (need to be able to search for an unused listener port,
-   detect we have already acquired the port,
-   release the listener port when we quit.)
-+  Clean up source code
-+  Deal with TODOs
-+  Add a way of quitting other than typing control-C
+*  Encryption
+
+    * Encrypting the communications is of course expected, but something
+      more interesting will be to encrypt data at-rest, so it can be
+      shared with untrusted parties
+
+*  Capabilities
+
+    * The ids should have built-in capabilities, allowing holders to
+      either being able to read and write, only read, or only store the
+      content (without being able to decipher it)
+
+*  Speed
+    * Rakoshare is currently naive in how the folders are checked, there
+      is room for improvement on this side
 
 Download, Install, and Build Instructions
 -----------------------------------------
 
 1. Download and install the Go tools from http://golang.org
 
-2. Use the "go" command to download, install, and build the Taipei-Torrent
+2. Use the "go" command to download, install, and build the Rakoshare
 app:
 
-    go get github.com/jackpal/Taipei-Torrent
+    go get github.com/rakoo/rakoshare
 
 Usage Instructions
 ------------------
 
-    Taipei-Torrent mydownload.torrent
-    Taipei-Torrent --useDHT "magnet:?xt=urn:btih:bbb6db69965af769f664b6636e7914f8735141b3"
+1. Create a share id:
 
-or
+  `$ head /dev/urandom | sha1sum`
 
-    Taipei-Torrent -help
+  or use one that someone gave you
+
+2. If you receive content from someone else, make sure the directory is
+   created:
+
+  `$ mkdir ~/Doc`
+
+3. Start the share:
+
+  `$ rakoshare -fileDir ~/Doc -id <the_previous_id> -useLPD=true -useDHT=true`
+
+4. The share is started. Try to edit some files, the changes will be
+   picked up and automatically propagated to the other peers.
+
+For more info:
+
+    rakoshare -help
 
 Third-party Packages
 --------------------
 
 http://code.google.com/p/bencode-go - Bencode encoder/decoder
+
+https://github.com/zeebo/bencode    - Another Bencode encoder/decoder
 
 http://code.google.com/p/go-nat-pmp - NAT-PMP firewall client
 
@@ -67,5 +94,5 @@ https://github.com/nictuku/nettools - Network utilities
 Related Projects
 ----------------
 
-https://github.com/nictuku/Taipei-Torrent is an active fork.
+https://github.com/jackpal/Taipei-Torrent is the base of rakoshare
 
