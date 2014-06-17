@@ -15,8 +15,9 @@ Bittorrent application.
 Current Status
 --------------
 
-Unstable. Anything, both in the implementation or the protocol, can
-change at any time (although the general idea should remain the same)
+Working but unstable. Anything, both in the implementation or the
+protocol, can change at any time (although the general idea should
+    remain the same)
 
 Rakoshare might currently eat your data if you're not cautious.
 
