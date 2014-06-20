@@ -97,3 +97,9 @@ Related Projects
 
 https://github.com/jackpal/Taipei-Torrent is the base of rakoshare
 
+Discussion
+----------
+
+Please open issues on the github tracker
+(https://github.com/rakoo/rakoshare/issues), or discuss over the mailing
+list: rakoshare served-by librelist.com
