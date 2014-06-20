@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -95,7 +96,7 @@ func (fe *fileEntry) SetPart() {
 }
 
 func (fe *fileEntry) ReadAt(p []byte, off int64) (n int, err error) {
-	file, err := os.OpenFile(fe.name, os.O_RDWR, 0600)
+	file, err := os.Open(fe.name)
 	if err != nil {
 		return
 	}
@@ -185,20 +186,12 @@ func NewFileStore(info *InfoDict, storePath string) (f FileStore, totalSize int6
 }
 
 func (f *fileStore) find(offset int64) int {
-	// Binary search
-	offsets := f.offsets
-	low := 0
-	high := len(offsets)
-	for low < high-1 {
-		probe := (low + high) / 2
-		entry := offsets[probe]
-		if offset < entry {
-			high = probe
-		} else {
-			low = probe
+	return sort.Search(len(f.offsets), func(i int) bool {
+		if i >= len(f.offsets)-1 {
+			return true
 		}
-	}
-	return low
+		return f.offsets[i+1] >= offset
+	})
 }
 
 func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
@@ -216,6 +209,7 @@ func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
 			nThisTime, err = entry.ReadAt(p[0:chunk], itemOffset)
 			n = n + nThisTime
 			if err != nil {
+				log.Fatal(err)
 				return
 			}
 			p = p[nThisTime:]

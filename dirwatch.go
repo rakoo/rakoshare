@@ -250,7 +250,7 @@ func createMeta(dir string) (meta *MetaInfo, err error) {
 			Pieces:      string(hasher.Pieces),
 			PieceLength: blockSize,
 			Private:     0,
-			Name:        "tmp",
+			Name:        "rakoshare",
 			Files:       fileDicts,
 		},
 	}
