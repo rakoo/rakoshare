@@ -10,12 +10,15 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime/pprof"
+
+	"github.com/rakoo/rakoshare/pkg/id"
 )
 
 var (
 	cpuprofile = flag.String("cpuprofile", "", "If not empty, collects CPU profile samples and writes the profile to the given file before the program exits")
 	memprofile = flag.String("memprofile", "", "If not empty, writes memory heap allocations to the given file before the program exits")
-	id         = flag.String("id", "", "The id of the share")
+	shareid    = flag.String("id", "", "The id of the share")
+	generate   = flag.Bool("gen", false, "If true, generate a 3-tuple of ids")
 )
 
 var torrent string
@@ -24,12 +27,21 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if *id == "" {
+	if *generate {
+		tid, err := id.New()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("WriteReadStore: %s\nReadStore: %s\nStore: %s\n", tid.WriteReadStoreID, tid.ReadStoreID, tid.StoreID)
+		return
+	}
+
+	if *shareid == "" {
 		fmt.Println("Missing a share id")
 		usage()
 		os.Exit(2)
 	}
-	shareID := NewShareID(*id)
+	shareID := NewShareID(*shareid)
 
 	if flag.NArg() != 0 {
 		log.Println("Don't want arguments")
@@ -103,12 +115,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := hex.DecodeString(shareID.PublicID())
+	shareid, err := hex.DecodeString(shareID.PublicID())
 	if err != nil {
 		log.Fatal(err)
 	}
 	if *useLPD {
-		lpd.Announce(string(id))
+		lpd.Announce(string(shareid))
 	}
 
 mainLoop:
