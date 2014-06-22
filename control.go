@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	ed "github.com/agl/ed25519"
 	"github.com/nictuku/dht"
+	"github.com/rakoo/rakoshare/pkg/id"
 	"github.com/zeebo/bencode"
 )
 
@@ -32,7 +33,7 @@ var (
 )
 
 type ControlSession struct {
-	ID     ShareID
+	ID     *id.Id
 	Port   int
 	PeerID string
 
@@ -59,7 +60,7 @@ type ControlSession struct {
 	workDir string
 }
 
-func NewControlSession(id ShareID, listenPort int, workDir string) (*ControlSession, error) {
+func NewControlSession(shareid *id.Id, listenPort int, workDir string) (*ControlSession, error) {
 	sid := "-tt" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 
 	// TODO: UPnP UDP port mapping.
@@ -96,7 +97,7 @@ func NewControlSession(id ShareID, listenPort int, workDir string) (*ControlSess
 	cs := &ControlSession{
 		Port:            listenPort,
 		PeerID:          sid[:20],
-		ID:              id,
+		ID:              shareid,
 		Torrents:        make(chan Announce),
 		NewPeers:        make(chan string),
 		dht:             dhtNode,
@@ -114,7 +115,7 @@ func NewControlSession(id ShareID, listenPort int, workDir string) (*ControlSess
 		workDir: workDir,
 	}
 	go cs.dht.Run()
-	cs.dht.PeersRequest(cs.ID.PublicID(), true)
+	cs.dht.PeersRequest(string(cs.ID.TorrentInfoHash[:]), true)
 
 	go cs.Run()
 
@@ -132,12 +133,7 @@ func (cs *ControlSession) Header() (header []byte) {
 	// Support Extension Protocol (BEP-0010)
 	header[25] |= 0x10
 
-	binID, err := hex.DecodeString(cs.ID.PublicID())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	copy(header[28:48], []byte(binID))
+	copy(header[28:48], cs.ID.TorrentInfoHash[:])
 	copy(header[48:68], []byte(cs.PeerID))
 
 	cs.header = header
@@ -244,7 +240,7 @@ func (cs *ControlSession) Run() {
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
 			if len(cs.peers) < TARGET_NUM_PEERS {
-				go cs.dht.PeersRequest(cs.ID.PublicID(), true)
+				go cs.dht.PeersRequest(string(cs.ID.TorrentInfoHash[:]), true)
 				trackerReportChan <- cs.makeClientStatusReport("")
 			}
 		case <-verboseChan:
@@ -283,7 +279,7 @@ func (cs *ControlSession) Quit() error {
 func (cs *ControlSession) makeClientStatusReport(event string) ClientStatusReport {
 	return ClientStatusReport{
 		Event:    event,
-		InfoHash: cs.ID.PublicID(),
+		InfoHash: string(cs.ID.TorrentInfoHash[:]),
 		PeerId:   cs.PeerID,
 		Port:     cs.Port,
 	}
@@ -472,7 +468,7 @@ type NewInfo struct {
 	Rev string `bencode:"rev"`
 }
 
-func NewIHMessage(port int64, ih, privkey, rev string) (mm IHMessage) {
+func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, err error) {
 	mm = IHMessage{
 		Info: NewInfo{
 			InfoHash: ih,
@@ -481,13 +477,24 @@ func NewIHMessage(port int64, ih, privkey, rev string) (mm IHMessage) {
 		Port: port,
 	}
 
-	if privkey != "" {
+	var buf bytes.Buffer
+	err = bencode.NewEncoder(&buf).Encode(mm.Info)
+	if err != nil {
+		log.Printf("[CONTROL] Couldn't encode ih message, returning now")
+		return mm, err
 	}
+
+	privarg := new([ed.PrivateKeySize]byte)
+	copy(privarg[:], priv[:])
+
+	sig := ed.Sign(privarg, buf.Bytes())
+	mm.Sig = string(sig[:])
 
 	return
 }
 
 func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
+	log.Println("New infohash message")
 	var message IHMessage
 	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&message)
 	if err != nil {
@@ -511,6 +518,22 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	}()
 
 	if cs.currentIH != message.Info.InfoHash {
+
+		var tmpInfoBuf bytes.Buffer
+		err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
+		if err != nil {
+			log.Printf("[CONTROL] Couldn't encode ih message, returning now")
+			return err
+		}
+
+		pub := [ed.PublicKeySize]byte(cs.ID.Pub)
+		sig := new([ed.SignatureSize]byte)
+		copy(sig[:], []byte(message.Sig))
+		ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), sig)
+		if !ok {
+			log.Printf("[CONTROL] Bad signature")
+			return errors.New("Bad Signature")
+		}
 
 		cs.Torrents <- Announce{
 			infohash: message.Info.InfoHash,
@@ -547,7 +570,7 @@ func (cs *ControlSession) DoPex(msg []byte, p *peerState) (err error) {
 }
 
 func (cs *ControlSession) Matches(ih string) bool {
-	return cs.ID.PublicID() == hex.EncodeToString([]byte(ih))
+	return string(cs.ID.TorrentInfoHash[:]) == ih
 }
 
 func (cs *ControlSession) SetCurrent(ih string) {
@@ -574,7 +597,11 @@ func (cs *ControlSession) SetCurrent(ih string) {
 	}
 	defer currentFile.Close()
 
-	mess := NewIHMessage(int64(cs.Port), cs.currentIH, "", cs.rev)
+	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev,
+		cs.ID.Priv)
+	if err != nil {
+		return
+	}
 	err = bencode.NewEncoder(currentFile).Encode(mess)
 
 	cs.broadcast(ih)
@@ -600,9 +627,13 @@ func (cs *ControlSession) ihMessage(ih string, ps *peerState) ([]byte, error) {
 	resp.WriteByte(EXTENSION)
 	resp.WriteByte(byte(ps.theirExtensions["bs_metadata"]))
 
-	privkey, _ := cs.ID.ReadWriteID()
-	msg := NewIHMessage(int64(cs.Port), ih, privkey, cs.rev)
-	err := bencode.NewEncoder(&resp).Encode(msg)
+	msg, err := NewIHMessage(int64(cs.Port), ih, cs.rev, cs.ID.Priv)
+	if err != nil {
+		log.Println("Couldn't create message: ", err)
+		return nil, err
+	}
+
+	err = bencode.NewEncoder(&resp).Encode(msg)
 	if err != nil {
 		log.Println("Couldn't encode msg: ", err)
 		return nil, errMetadataMessage

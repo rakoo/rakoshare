@@ -55,9 +55,18 @@ app:
 Usage Instructions
 ------------------
 
-1. Create a share id:
+1. Create a share id tuple:
 
-  `$ head /dev/urandom | sha1sum`
+  `$ ./rakoshare -gen`
+
+  The result will be a list of different ids, each with a different
+  capability:
+
+  ```
+  WriteReadStore: Zc3U2tGWsardUBxTcSPdSS5aPgwV3rakPe4xcVm6qbC8
+  ReadStore: ENjn1seRA5cWRuFkpzsHuZu6mRDSBLgHviNH9xjgpCpiJg7jZzJ5BqurhTMn9aDJ678kvbkESeki9dS3sZEWEczZ
+  Store: QcTRtY4E2E32k9tHx3X2tN8NLCPjYwWyXMhdh9R1dZ7jok5MJcv61zUGicj5KsbnbfGf5Cogb1xFf9JzyRq5H6s1
+  ```
 
   or use one that someone gave you
 
@@ -66,12 +75,14 @@ Usage Instructions
 
   `$ mkdir ~/Doc`
 
-3. Start the share:
+3. Start the share with one of the ids you created earlier, or with one
+   you were given:
 
   `$ rakoshare -fileDir ~/Doc -id <the_previous_id> -useLPD=true -useDHT=true`
 
-4. The share is started. Try to edit some files, the changes will be
-   picked up and automatically propagated to the other peers.
+4. The share is started. If you used a WriteReadStore id, then you have
+   the capability of writing things that will be spread to everyone;
+   otherwise you will only be able to receive from others.
 
 For more info:
 

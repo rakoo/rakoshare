@@ -51,14 +51,14 @@ type PreSharedKey [32]byte
 // IDs also contain all information needed to find the corresponding
 // swarm and connect to peers.
 type Id struct {
-	priv PrivKey
-	pub  PubKey
+	Priv PrivKey
+	Pub  PubKey
 
 	// The encryption key, available for ReadStore and above
-	enc EncryptionKey
+	Enc EncryptionKey
 
 	// The preshared key, available for Store and above
-	psk PreSharedKey
+	Psk PreSharedKey
 
 	// The base58 encoded ids to be shared with other humans
 	// Some of them may not be filled, depending on the capabilities
@@ -101,11 +101,11 @@ func (id *Id) fillWRS(randSeed [32]byte) error {
 	if err != nil {
 		return err
 	}
-	id.priv = PrivKey(*tmpPriv)
+	id.Priv = PrivKey(*tmpPriv)
 
 	var sha3Priv [32]byte
 	sha := sha3.NewKeccak512()
-	sha.Write(id.priv[:])
+	sha.Write(id.Priv[:])
 	copy(sha3Priv[:], sha.Sum(nil))
 	enc := derive(sha3Priv)
 
@@ -114,18 +114,18 @@ func (id *Id) fillWRS(randSeed [32]byte) error {
 
 func (id *Id) fillRS(pub PubKey, enc EncryptionKey) error {
 	id.ReadStoreID = encodeWithRole(CommonFormat(enc), pub, ReadStore)
-	id.enc = enc
+	id.Enc = enc
 	psk := derive(CommonFormat(enc))
 	return id.fillS(pub, PreSharedKey(psk))
 }
 
 func (id *Id) fillS(pub PubKey, psk PreSharedKey) error {
 	id.StoreID = encodeWithRole(CommonFormat(psk), pub, Store)
-	id.psk = psk
-	id.pub = pub
+	id.Psk = psk
+	id.Pub = pub
 
 	// Torrent id
-	forSha1 := derive(CommonFormat(id.psk))
+	forSha1 := derive(CommonFormat(id.Psk))
 	id.TorrentInfoHash = sha1.Sum(forSha1[:])
 
 	return nil
@@ -159,7 +159,7 @@ func NewFromString(in string) (*Id, error) {
 		}
 
 		var pub PubKey
-		copy(pub[:], decoded[1:len(pub)])
+		copy(pub[:], decoded[1:len(pub)+1])
 
 		var enc EncryptionKey
 		copy(enc[:], decoded[1+len(pub):])
@@ -172,10 +172,10 @@ func NewFromString(in string) (*Id, error) {
 		}
 
 		var pub PubKey
-		copy(pub[:], decoded[1:len(pub)])
+		copy(pub[:], decoded[1:len(pub)+1])
 
 		var psk PreSharedKey
-		copy(psk[:], decoded[1+len(pub):])
+		copy(psk[:], decoded[1+len(pub)+1:])
 		id.fillS(pub, psk)
 		return id, nil
 
@@ -183,7 +183,7 @@ func NewFromString(in string) (*Id, error) {
 		return nil, errors.New(fmt.Sprintf("Invalid role: %d", decoded[0]))
 	}
 
-	return nil, errors.New("Invalid format")
+	return nil, errors.New(fmt.Sprintf("Invalid len: %d", len(decoded)))
 }
 
 func derive(in CommonFormat) CommonFormat {
@@ -211,7 +211,7 @@ func encodeWriteReadStore(rand [32]byte) string {
 func encodeWithRole(blob CommonFormat, pubkey PubKey, r Role) string {
 	cp := make([]byte, len(blob)+ed.PublicKeySize+1)
 	cp[0] = byte(r)
-	copy(cp[1:ed.PublicKeySize], pubkey[:])
+	copy(cp[1:ed.PublicKeySize+1], pubkey[:])
 	copy(cp[1+ed.PublicKeySize:], blob[:])
 	return base58.Encode(cp)
 }

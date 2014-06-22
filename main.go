@@ -17,7 +17,7 @@ import (
 var (
 	cpuprofile = flag.String("cpuprofile", "", "If not empty, collects CPU profile samples and writes the profile to the given file before the program exits")
 	memprofile = flag.String("memprofile", "", "If not empty, writes memory heap allocations to the given file before the program exits")
-	shareid    = flag.String("id", "", "The id of the share")
+	idstring   = flag.String("id", "", "The id of the share")
 	generate   = flag.Bool("gen", false, "If true, generate a 3-tuple of ids")
 )
 
@@ -28,20 +28,24 @@ func main() {
 	flag.Parse()
 
 	if *generate {
-		tid, err := id.New()
+		tmpId, err := id.New()
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("WriteReadStore: %s\nReadStore: %s\nStore: %s\n", tid.WriteReadStoreID, tid.ReadStoreID, tid.StoreID)
+		fmt.Printf("WriteReadStore: %s\nReadStore: %s\nStore: %s\n",
+			tmpId.WriteReadStoreID, tmpId.ReadStoreID, tmpId.StoreID)
 		return
 	}
 
-	if *shareid == "" {
+	if *idstring == "" {
 		fmt.Println("Missing a share id")
 		usage()
 		os.Exit(2)
 	}
-	shareID := NewShareID(*shareid)
+	shareID, err := id.NewFromString(*idstring)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if flag.NArg() != 0 {
 		log.Println("Don't want arguments")
@@ -85,7 +89,7 @@ func main() {
 		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
 		os.Exit(1)
 	}
-	watcher := NewWatcher(workDir, filepath.Clean(fileDir))
+	watcher := NewWatcher(workDir, filepath.Clean(fileDir), shareID.CanWrite())
 
 	log.Println("Starting.")
 
@@ -115,12 +119,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	shareid, err := hex.DecodeString(shareID.PublicID())
-	if err != nil {
-		log.Fatal(err)
-	}
 	if *useLPD {
-		lpd.Announce(string(shareid))
+		lpd.Announce(string(shareID.TorrentInfoHash[:]))
 	}
 
 mainLoop:

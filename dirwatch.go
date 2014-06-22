@@ -31,7 +31,7 @@ type Watcher struct {
 	PingNewTorrent chan string
 }
 
-func NewWatcher(workDir, watchedDir string) (w *Watcher) {
+func NewWatcher(workDir, watchedDir string, canWrite bool) (w *Watcher) {
 
 	if _, err := os.Stat(workDir); err != nil {
 		if os.IsNotExist(err) {
@@ -65,7 +65,10 @@ func NewWatcher(workDir, watchedDir string) (w *Watcher) {
 		watchedDir:     watchedDir,
 		PingNewTorrent: make(chan string),
 	}
-	go w.watch()
+
+	if canWrite {
+		go w.watch()
+	}
 
 	// Initialization, only if there is something in the dir
 	if _, err := os.Stat(watchedDir); err != nil {
