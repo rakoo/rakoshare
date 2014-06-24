@@ -1,4 +1,4 @@
-Rakoshare
+Rakoshare [![Gobuild Download](http://gobuild.io/badge/github.com/rakoo/rakoshare/download.png)](http://gobuild.io/github.com/rakoo/rakoshare)
 =========
 
 Rakoshare is a sharing tool to synchronize a folder on multiple
