@@ -88,6 +88,23 @@ For more info:
 
     rakoshare -help
 
+Demo !
+------
+
+I am currently fetching the /r/earthPorn rss on reddit
+(http://reddit.com/r/earthPorn) every hour, and scrape the pics in some
+folder. This folder is accessible with the following ReadStore id:
+
+    BPpBrTpPNsHSSEmjDJhj5Q4GiUy96992dUNua79b4fKZ8kGtty281gqhPEFEQaN8ZZSDXGp4mCZFnd3GfjvtUJYJ
+
+This means that you should be able to get a folder of nice
+wallpaper-worthy pics by running this command:
+
+    $ rakoshare -fileDir ~/redditEarthPorn -id BPpBrTpPNsHSSEmjDJhj5Q4GiUy96992dUNua79b4fKZ8kGtty281gqhPEFEQaN8ZZSDXGp4mCZFnd3GfjvtUJYJ -useDHT=true
+
+Feel free to try it and don't hesitate to send your feedbacks !
+
+
 Third-party Packages
 --------------------
 

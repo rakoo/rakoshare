@@ -46,6 +46,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if shareID.CanWrite() {
+		log.Printf("WriteReadStore: %s\n", shareID.WriteReadStoreID)
+	}
+	if shareID.CanRead() {
+		log.Printf("ReadStore: %s\n", shareID.ReadStoreID)
+	}
+	log.Printf("Store: %s\n", shareID.StoreID)
 
 	if flag.NArg() != 0 {
 		log.Println("Don't want arguments")

@@ -166,7 +166,7 @@ func (cs *ControlSession) Run() {
 	go cs.deadlockDetector(heartbeat, quitDeadlock)
 
 	rechokeChan := time.Tick(1 * time.Second)
-	verboseChan := time.Tick(10 * time.Second)
+	verboseChan := time.Tick(10 * time.Minute)
 	keepAliveChan := time.Tick(60 * time.Second)
 
 	// Start out polling tracker every 20 seconds until we get a response.

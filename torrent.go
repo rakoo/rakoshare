@@ -457,7 +457,7 @@ func (t *TorrentSession) DoTorrent() {
 	log.Println("[CURRENT] Start")
 
 	rechokeChan := time.Tick(1 * time.Second)
-	verboseChan := time.Tick(10 * time.Second)
+	verboseChan := time.Tick(10 * time.Minute)
 	keepAliveChan := time.Tick(60 * time.Second)
 	var retrackerChan <-chan time.Time
 	if !t.trackerLessMode {
