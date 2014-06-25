@@ -14,7 +14,7 @@ func checkPieces(fs FileStore, totalLength int64, m *MetaInfo) (good, bad int, g
 	goodBits = NewBitset(int(numPieces))
 	ref := m.Info.Pieces
 	if len(ref) != numPieces*sha1.Size {
-		err = errors.New("Incorrect Info.Pieces length")
+		err = errors.New(fmt.Sprintf("Incorrect Info.Pieces length: expected %d, got %d", len(ref), numPieces*sha1.Size))
 		return
 	}
 	currentSums, err := computeSums(fs, totalLength, m.Info.PieceLength)

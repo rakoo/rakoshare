@@ -158,7 +158,7 @@ mainLoop:
 			}
 		case ih := <-watcher.PingNewTorrent:
 			if ih == controlSession.currentIH && !currentSession.IsEmpty() {
-				continue
+				break
 			}
 
 			controlSession.SetCurrent(ih)
@@ -166,10 +166,12 @@ mainLoop:
 			currentSession.Quit()
 
 			torrentFile := filepath.Join(workDir, fmt.Sprintf("%x", ih))
-			currentSession, err = NewTorrentSession(torrentFile, listenPort)
+			tentativeSession, err := NewTorrentSession(torrentFile, listenPort)
 			if err != nil {
-				log.Fatal("Couldn't start new session from watched dir: ", err)
+				log.Println("Couldn't start new session from watched dir: ", err)
+				break
 			}
+			currentSession = tentativeSession
 			go currentSession.DoTorrent()
 			for _, peer := range controlSession.peers {
 				currentSession.hintNewPeer(peer.address)
@@ -180,10 +182,12 @@ mainLoop:
 			currentSession.Quit()
 
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
-			currentSession, err = NewTorrentSession(magnet, listenPort)
+			tentativeSession, err := NewTorrentSession(magnet, listenPort)
 			if err != nil {
-				log.Fatal("Couldn't start new session from announce: ", err)
+				log.Println("Couldn't start new session from announce: ", err)
+				break
 			}
+			currentSession = tentativeSession
 			go currentSession.DoTorrent()
 			currentSession.hintNewPeer(announce.peer)
 		case peer := <-controlSession.NewPeers:
@@ -192,7 +196,7 @@ mainLoop:
 				tentativeSession, err := NewTorrentSession(magnet, listenPort)
 				if err != nil {
 					log.Printf("Couldn't start new session with new peer: %s\n", err)
-					continue
+					break
 				}
 				currentSession = tentativeSession
 				go currentSession.DoTorrent()

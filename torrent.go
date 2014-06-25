@@ -197,7 +197,7 @@ func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err 
 	}
 
 	if !t.si.FromMagnet {
-		t.load()
+		err = t.load()
 	}
 	return t, err
 }
@@ -206,24 +206,25 @@ func (t *TorrentSession) NewMetaInfo() chan *MetaInfo {
 	return t.miChan
 }
 
-func (t *TorrentSession) reload(info []byte) {
+func (t *TorrentSession) reload(info []byte) error {
 	err := bencode.NewDecoder(bytes.NewReader(info)).Decode(&t.m.Info)
 	if err != nil {
 		log.Println("Error when reloading torrent: ", err)
-		return
+		return err
 	}
 
 	t.miChan <- t.m
-	t.load()
+	return t.load()
 }
 
-func (t *TorrentSession) load() {
+func (t *TorrentSession) load() error {
 	var err error
 
 	log.Printf("Tracker: %v, Comment: %v, InfoHash: %x, Encoding: %v, Private: %v",
 		t.m.AnnounceList, t.m.Comment, t.m.InfoHash, t.m.Encoding, t.m.Info.Private)
 	if e := t.m.Encoding; e != "" && e != "UTF-8" {
-		return
+		log.Printf("Invalid encoding, couldn't load: %s\n", e)
+		return errors.New("Invalid encoding: " + e)
 	}
 
 	if t.m.Announce == "" {
@@ -244,12 +245,12 @@ func (t *TorrentSession) load() {
 	start := time.Now()
 	good, bad, pieceSet, err := checkPieces(t.fileStore, t.totalSize, t.m)
 	if err != nil {
-		log.Fatal("Error when checking pieces: ", err)
+		return errors.New(fmt.Sprintf("Error when checking pieces: %s", err))
 	}
 	end := time.Now()
 	log.Printf("Computed missing pieces (%.2f seconds)", end.Sub(start).Seconds())
 	if err != nil {
-		return
+		return err
 	}
 	t.pieceSet = pieceSet
 	t.totalPieces = good + bad
@@ -269,6 +270,7 @@ func (t *TorrentSession) load() {
 	}
 
 	t.si.HaveTorrent = true
+	return nil
 }
 
 func (t *TorrentSession) IsEmpty() bool {

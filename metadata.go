@@ -137,7 +137,10 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 			break
 		}
 
-		t.reload(info)
+		err = t.reload(info)
+		if err != nil {
+			return
+		}
 
 		if p.have == nil {
 			if p.temporaryBitfield != nil {
