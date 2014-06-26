@@ -396,6 +396,7 @@ func (cs *ControlSession) DoMessage(p *peerState, message []byte) (err error) {
 	}
 
 	if message[0] != EXTENSION {
+		log.Printf("Wrong message type: %d\n", message[0])
 		return errInvalidType
 	}
 	switch message[1] {

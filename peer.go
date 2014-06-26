@@ -236,12 +236,12 @@ func (p *peerState) peerWriter(errorChan chan peerMessage) {
 		// log.Println("Writing", uint32(len(msg)), p.conn.RemoteAddr())
 		err := writeNBOUint32(p.conn, uint32(len(msg)))
 		if err != nil {
-			log.Println(err)
+			log.Printf("Failed to write len(msg): %s\n", err)
 			break
 		}
 		_, err = p.conn.Write(msg)
 		if err != nil {
-			// log.Println("Failed to write a message", p.address, len(msg), msg, err)
+			log.Printf("Failed to write %d bytes to %s: %s\n", len(msg), p.address, err)
 			break
 		}
 	}
@@ -258,6 +258,7 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 		var n uint32
 		n, err := readNBOUint32(p.conn)
 		if err != nil {
+			log.Printf("Failed to read len(msg): %s\n", err)
 			break
 		}
 		if n > 130*1024 {
@@ -269,6 +270,7 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 
 		_, err = io.ReadFull(p.conn, buf)
 		if err != nil {
+			log.Printf("Failed to read %d bytes from %s: %s\n", len(buf), p.address, err)
 			break
 		}
 		msgChan <- peerMessage{p, buf}
