@@ -423,11 +423,11 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 
 	// Now that handshake is done and we know their extension, send the
 	// current ih message
-	message, err := cs.ihMessage(cs.currentIH, p)
+	message, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
 	if err != nil {
 		log.Println(err)
 	} else {
-		p.sendMessage(message)
+		p.sendExtensionMessage("bs_metadata", message)
 	}
 
 	return
@@ -494,7 +494,6 @@ func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, er
 }
 
 func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
-	log.Println("New infohash message")
 	var message IHMessage
 	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&message)
 	if err != nil {
@@ -613,31 +612,11 @@ func (cs *ControlSession) broadcast(ih string) {
 			continue
 		}
 
-		message, err := cs.ihMessage(ih, ps)
+		message, err := NewIHMessage(int64(cs.Port), ih, cs.rev, cs.ID.Priv)
 		if err != nil {
 			log.Println(err)
 		} else {
-			ps.sendMessage(message)
+			ps.sendExtensionMessage("bs_metadata", message)
 		}
 	}
-}
-
-func (cs *ControlSession) ihMessage(ih string, ps *peerState) ([]byte, error) {
-	var resp bytes.Buffer
-	resp.WriteByte(EXTENSION)
-	resp.WriteByte(byte(ps.theirExtensions["bs_metadata"]))
-
-	msg, err := NewIHMessage(int64(cs.Port), ih, cs.rev, cs.ID.Priv)
-	if err != nil {
-		log.Println("Couldn't create message: ", err)
-		return nil, err
-	}
-
-	err = bencode.NewEncoder(&resp).Encode(msg)
-	if err != nil {
-		log.Println("Couldn't encode msg: ", err)
-		return nil, errMetadataMessage
-	}
-
-	return resp.Bytes(), nil
 }
