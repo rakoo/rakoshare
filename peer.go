@@ -265,13 +265,7 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 			break
 		}
 
-		var buf []byte
-		if n == 0 {
-			// keep-alive - we want an empty message
-			buf = make([]byte, 1)
-		} else {
-			buf = make([]byte, n)
-		}
+		buf := make([]byte, n)
 
 		_, err = io.ReadFull(p.conn, buf)
 		if err != nil {
