@@ -101,7 +101,7 @@ func main() {
 	log.Println("Starting.")
 
 	// External listener
-	conChan, listenPort, err := listenForPeerConnections()
+	conChan, listenPort, err := listenForPeerConnections([]byte(shareID.Psk[:]))
 	if err != nil {
 		log.Fatal("Couldn't listen for peers connection: ", err)
 	}
@@ -166,7 +166,7 @@ mainLoop:
 			currentSession.Quit()
 
 			torrentFile := filepath.Join(workDir, fmt.Sprintf("%x", ih))
-			tentativeSession, err := NewTorrentSession(torrentFile, listenPort)
+			tentativeSession, err := NewTorrentSession(shareID, torrentFile, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from watched dir: ", err)
 				break
@@ -182,7 +182,7 @@ mainLoop:
 			currentSession.Quit()
 
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
-			tentativeSession, err := NewTorrentSession(magnet, listenPort)
+			tentativeSession, err := NewTorrentSession(shareID, magnet, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from announce: ", err)
 				break
@@ -193,7 +193,7 @@ mainLoop:
 		case peer := <-controlSession.NewPeers:
 			if currentSession.IsEmpty() {
 				magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", controlSession.currentIH)
-				tentativeSession, err := NewTorrentSession(magnet, listenPort)
+				tentativeSession, err := NewTorrentSession(shareID, magnet, listenPort)
 				if err != nil {
 					log.Printf("Couldn't start new session with new peer: %s\n", err)
 					break

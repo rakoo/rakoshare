@@ -16,6 +16,8 @@ import (
 
 	"github.com/nictuku/dht"
 	"github.com/zeebo/bencode"
+
+	"github.com/rakoo/rakoshare/pkg/id"
 )
 
 const (
@@ -152,10 +154,12 @@ type TorrentSession struct {
 	trackerLessMode   bool
 
 	miChan chan *MetaInfo
+	Id     *id.Id
 }
 
-func NewTorrentSession(torrent string, listenPort int) (ts *TorrentSession, err error) {
+func NewTorrentSession(shareId *id.Id, torrent string, listenPort int) (ts *TorrentSession, err error) {
 	t := &TorrentSession{
+		Id:              shareId,
 		peers:           make(map[string]*peerState),
 		peerMessageChan: make(chan peerMessage),
 		activePieces:    make(map[int]*ActivePiece),
@@ -313,7 +317,7 @@ func (ts *TorrentSession) hintNewPeer(peer string) {
 }
 
 func (ts *TorrentSession) connectToPeer(peer string) {
-	conn, err := NewTCPConn(peer)
+	conn, err := NewTCPConn([]byte(ts.Id.Psk[:]), peer)
 	if err != nil {
 		log.Println("Failed to connect to", peer, err)
 		return

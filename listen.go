@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"strconv"
+
+	"github.com/dchest/spipe"
 )
 
 var (
@@ -28,7 +30,7 @@ type btConn struct {
 // listenForPeerConnections listens on a TCP port for incoming connections and
 // demuxes them to the appropriate active torrentSession based on the InfoHash
 // in the header.
-func listenForPeerConnections() (conChan chan *btConn, listenPort int, err error) {
+func listenForPeerConnections(key []byte) (conChan chan *btConn, listenPort int, err error) {
 	listener, err := createListener()
 	if err != nil {
 		return
@@ -46,14 +48,13 @@ func listenForPeerConnections() (conChan chan *btConn, listenPort int, err error
 	}
 	go func() {
 		for {
-			var conn net.Conn
-			conn, err := listener.Accept()
+			tcpConn, err := listener.Accept()
 			if err != nil {
 				log.Println("Listener accept failed:", err)
 				continue
 			}
-			llconn := NewLongLivedconn(conn)
-			header, err := readHeader(llconn)
+			conn := spipe.Server(key, tcpConn)
+			header, err := readHeader(conn)
 			if err != nil {
 				log.Println("Error reading header: ", err)
 				continue
@@ -64,7 +65,7 @@ func listenForPeerConnections() (conChan chan *btConn, listenPort int, err error
 				header:   header,
 				infohash: peersInfoHash,
 				id:       id,
-				conn:     llconn,
+				conn:     conn,
 			}
 		}
 	}()

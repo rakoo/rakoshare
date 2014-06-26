@@ -286,7 +286,7 @@ func (cs *ControlSession) makeClientStatusReport(event string) ClientStatusRepor
 }
 
 func (cs *ControlSession) connectToPeer(peer string) {
-	conn, err := NewTCPConn(peer)
+	conn, err := NewTCPConn([]byte(cs.ID.Psk[:]), peer)
 	if err != nil {
 		// log.Println("Failed to connect to", peer, err)
 		return
