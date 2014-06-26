@@ -23,20 +23,23 @@ Rakoshare might currently eat your data if you're not cautious.
 
 Tested on Linux.
 
+[x] On-the-fly encryption with [spiped](https://github.com/dchest/spipe)
+
 Development Roadmap
 -------------------
 
 *  Encryption
 
-    * Encrypting the communications is of course expected, but something
-      more interesting will be to encrypt data at-rest, so it can be
-      shared with untrusted parties
+    * Encryption of the data at-rest is desirable to send data to
+    untrusted servers.
 
 *  Capabilities
 
     * The ids should have built-in capabilities, allowing holders to
       either being able to read and write, only read, or only store the
-      content (without being able to decipher it)
+      content (without being able to decipher it).
+      Currently, everyone who can enter the swarm can read the content;
+      Store capa is not yet implemneted.
 
 *  Speed
     * Rakoshare is currently naive in how the folders are checked, there
@@ -119,6 +122,8 @@ https://github.com/hailiang/gosocks - SOCKS5 proxy support
 https://github.com/nictuku/dht      - Distributed Hash Table
 
 https://github.com/nictuku/nettools - Network utilities
+
+https://github.com/dchest/spipe     - pure-go [spiped](https://www.tarsnap.com/spiped.html) implementation
 
 Related Projects
 ----------------
