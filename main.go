@@ -169,6 +169,10 @@ mainLoop:
 			tentativeSession, err := NewTorrentSession(shareID, torrentFile, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from watched dir: ", err)
+
+				// Fallback to an emptytorrent, because the previous one is
+				// invalid; hope it will be ok next time !
+				currentSession = EmptyTorrent{}
 				break
 			}
 			currentSession = tentativeSession
@@ -185,6 +189,7 @@ mainLoop:
 			tentativeSession, err := NewTorrentSession(shareID, magnet, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from announce: ", err)
+				currentSession = EmptyTorrent{}
 				break
 			}
 			currentSession = tentativeSession
