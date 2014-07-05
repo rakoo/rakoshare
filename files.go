@@ -103,8 +103,9 @@ func (fe *fileEntry) ReadAt(p []byte, off int64) (n int, err error) {
 	defer file.Close()
 	n, err = file.ReadAt(p, off)
 	if err != nil {
-		log.Fatalf("Couldn't read %d-%d from %s: %s\n", off,
+		log.Printf("Couldn't read %d-%d from %s: %s\n", off,
 			off+int64(len(p)), fe.name, err)
+		return
 	}
 	return
 }

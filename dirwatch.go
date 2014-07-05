@@ -112,10 +112,11 @@ func (w *Watcher) currentTorrent() (ih string, err error) {
 	}
 
 	// No torrent but there is content. Calculate manually.
-	return w.torrentify(), nil
+	return w.torrentify()
 }
 
 func (w *Watcher) watch() {
+
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
 
@@ -136,53 +137,59 @@ func (w *Watcher) watch() {
 		if err == errNewFile {
 			// New torrent: block until we completely manage it. We will take
 			// care of other changes in the next run of the loop.
-			w.PingNewTorrent <- w.torrentify()
+			ih, err := w.torrentify()
+			if err != nil {
+				log.Printf("Couldn't torrentify: ", err)
+				continue
+			}
+			w.PingNewTorrent <- ih
 		} else {
 			log.Println("Error while walking dir:", err)
 		}
 	}
 }
 
-func (w *Watcher) torrentify() (ih string) {
+func (w *Watcher) torrentify() (ih string, err error) {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
 	meta, err := createMeta(w.watchedDir)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
-	w.saveMetainfo(meta)
+	err = w.saveMetainfo(meta)
 
-	return meta.InfoHash
+	return meta.InfoHash, err
 }
 
-func (w *Watcher) saveMetainfo(meta *MetaInfo) {
+func (w *Watcher) saveMetainfo(meta *MetaInfo) error {
 
 	tmpFile, err := ioutil.TempFile(w.workDir, "current.")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() {
 		err = os.Remove(tmpFile.Name())
 		if err != nil {
-			log.Fatal(err)
+			return
 		}
 	}()
 
 	err = tmpFile.Close()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	ihhex := fmt.Sprintf("%x", meta.InfoHash)
 
 	f, err := os.Create(tmpFile.Name())
 	if err != nil {
-		log.Fatal("Couldn't create out file: ", err)
+		return err
 	}
 	err = bencode.NewEncoder(f).Encode(meta)
 	if err != nil {
-		log.Fatal("Couldn't create torrent: ", err)
+		return err
 	}
 	f.Close()
 
@@ -190,22 +197,22 @@ func (w *Watcher) saveMetainfo(meta *MetaInfo) {
 	currentTorrent := filepath.Join(w.workDir, ihhex)
 	if st, err := os.Stat(currentTorrent); st != nil {
 		if err = os.Remove(currentTorrent); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
 	err = os.Link(tmpFile.Name(), currentTorrent)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Update last mod time
 	st, err := os.Stat(currentTorrent)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	w.lastModTime = st.ModTime()
 
-	return
+	return nil
 }
 
 func createMeta(dir string) (meta *MetaInfo, err error) {
@@ -215,15 +222,20 @@ func createMeta(dir string) (meta *MetaInfo, err error) {
 
 	hasher := NewBlockHasher(blockSize)
 	err = torrentWalk(dir, func(path string, info os.FileInfo, perr error) (err error) {
+		if perr != nil {
+			return perr
+		}
+
 		f, err := os.Open(path)
 		if err != nil {
-			log.Fatalf("Couldn't open %s for hashing: %s\n", path, err)
+			return errors.New(fmt.Sprintf("Couldn't open %s for hashing: %s\n", path, err))
 		}
 		defer f.Close()
 
 		_, err = io.Copy(hasher, f)
 		if err != nil {
-			log.Fatalf("Couldn't hash %s: %s\n", path, err)
+			log.Printf("Couldn't hash %s: %s\n", path, err)
+			return err
 		}
 
 		relPath, err := filepath.Rel(dir, path)
@@ -245,7 +257,7 @@ func createMeta(dir string) (meta *MetaInfo, err error) {
 
 	end := hasher.Close()
 	if end != nil {
-		log.Fatal("Couldn't hash files correctly: ", err)
+		return
 	}
 
 	meta = &MetaInfo{
@@ -299,7 +311,7 @@ func (h *BlockHasher) ReadFrom(rd io.Reader) (n int64, err error) {
 				if err == io.EOF {
 					stop = true
 				} else {
-					log.Fatal("Error when sha1-ing: ", err)
+					return n, err
 				}
 			}
 			h.left -= thisN
