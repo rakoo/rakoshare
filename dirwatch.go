@@ -332,9 +332,11 @@ func (h *BlockHasher) ReadFrom(rd io.Reader) (n int64, err error) {
 }
 
 func (h *BlockHasher) Close() (err error) {
-	if h.left > 0 {
-		h.Pieces = h.sha1er.Sum(h.Pieces)
+	if h.left == h.blockSize {
+		// We're at the end of a blockSize, we don't have any buffered data
+		return
 	}
+	h.Pieces = h.sha1er.Sum(h.Pieces)
 	return
 }
 

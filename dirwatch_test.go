@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha1"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -17,6 +16,10 @@ var vecs = []testVector{
 	{
 		dir:             "testData/dsl-4.4.10.iso",
 		expectedTorrent: "testData/dsl-1M.torrent",
+	},
+	{
+		dir:             "testData/1Mrandom",
+		expectedTorrent: "testData/1Mrandom.torrent",
 	},
 }
 
@@ -47,9 +50,13 @@ func TestTorrentify(t *testing.T) {
 		}
 		expectedPieces := split(expectedMeta.Info.Pieces)
 
+		if len(expectedPieces) != len(actualPieces) {
+			t.Fatalf("Invalid length! Expected %d piece(s), got %d\n", len(expectedPieces), len(actualPieces))
+		}
+
 		for i, exp := range expectedPieces {
 			if actualPieces[i] != exp {
-				fmt.Printf("%x - %x\n", exp, actualPieces[i])
+				t.Fatalf("%x - %x\n", exp, actualPieces[i])
 			}
 		}
 
