@@ -209,7 +209,6 @@ func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
 			nThisTime, err = entry.ReadAt(p[0:chunk], itemOffset)
 			n = n + nThisTime
 			if err != nil {
-				log.Fatal(err)
 				return
 			}
 			p = p[nThisTime:]

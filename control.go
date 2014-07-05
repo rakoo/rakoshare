@@ -301,7 +301,7 @@ func (cs *ControlSession) connectToPeer(peer string) {
 
 	theirheader, err := readHeader(conn)
 	if err != nil {
-		log.Printf("Failed to read header from %s: %s\n", peer, err)
+		// log.Printf("Failed to read header from %s: %s\n", peer, err)
 		return
 	}
 

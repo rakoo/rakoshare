@@ -56,9 +56,10 @@ func listenForPeerConnections(key []byte) (conChan chan *btConn, listenPort int,
 			conn := spipe.Server(key, tcpConn)
 			header, err := readHeader(conn)
 			if err != nil {
-				log.Println("Error reading header: ", err)
+				//log.Println("Error reading header: ", err)
 				continue
 			}
+			log.Printf("New peer: %s\n", conn.RemoteAddr())
 			peersInfoHash := string(header[8:28])
 			id := string(header[28:48])
 			conChan <- &btConn{
