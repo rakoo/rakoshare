@@ -22,6 +22,13 @@ var (
 	errNewFile = errors.New("Got new file")
 )
 
+type state int
+
+const (
+	IDEM = iota
+	CHANGED
+)
+
 type Watcher struct {
 	lastModTime time.Time
 	workDir     string
@@ -116,12 +123,16 @@ func (w *Watcher) currentTorrent() (ih string, err error) {
 }
 
 func (w *Watcher) watch() {
+	var previousState, currentState state
+	currentState = IDEM
+
+	compareTime := w.lastModTime
 
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
 
 		err := torrentWalk(w.watchedDir, func(path string, info os.FileInfo, perr error) (err error) {
-			if info.ModTime().After(w.lastModTime) {
+			if info.ModTime().After(compareTime) {
 				fmt.Printf("[newer] %s\n", path)
 				return errNewFile
 			}
@@ -130,12 +141,25 @@ func (w *Watcher) watch() {
 
 		w.lock.Unlock()
 
-		if err == nil {
-			continue
-		}
+		previousState = currentState
 
 		if err == errNewFile {
-			// New torrent: block until we completely manage it. We will take
+			currentState = CHANGED
+		} else if err == nil {
+			currentState = IDEM
+		} else {
+			log.Println("Error while walking dir:", err)
+		}
+
+		compareTime = time.Now()
+
+		if currentState == IDEM && previousState == CHANGED {
+			// Note that we may be in the CHANGED state for multiple
+			// iterations, such as when changes take more than 10 seconds to
+			// finish. When we go back to "idle" state, we kick in the
+			// metadata creation.
+
+			// Block until we completely manage it. We will take
 			// care of other changes in the next run of the loop.
 			ih, err := w.torrentify()
 			if err != nil {
@@ -143,8 +167,6 @@ func (w *Watcher) watch() {
 				continue
 			}
 			w.PingNewTorrent <- ih
-		} else {
-			log.Println("Error while walking dir:", err)
 		}
 	}
 }
