@@ -1,27 +1,21 @@
 package id
 
 import (
-	"bytes"
-	"fmt"
+	"encoding/hex"
 	"testing"
 )
 
 type vec struct {
 	WRS string
 	RS  string
-
-	Pub string
-	Enc string
-	TIH string
+	S   string
 }
 
 var (
 	vector1 = vec{
-		WRS: "WjtGTvF26veb1YE1pRMBMKVnkD17p4wafwtDeqbf73Rw",
-		RS:  "EpudJqATKA1TaH7fgsP31XveF5UmC2eGHrjGgmXmDF9Z1h3rR8Y52rntw6hCvcAV9uWkHk3SNFPYmHuQV98Eh6cN",
-		Pub: "b388d202bb7e6eca82b38c321495f686320e9790490d356769e67fc660a31c1c",
-		Enc: "a214a6c73d48bdd2f960a5f3f58ce4a341ac5b3b3a9d429e3689b8dda8a48827",
-		TIH: "268214e30da706ff496f9fabd00193f57bc4bdfd",
+		WRS: "B76BogapG9DGadhsuUd1ikteJKo7iAnMKNjHtAf8KA626SnWuuiVCQaUftG5cGRWUCGFGegTnmRRourTX6WwHor8",
+		RS:  "j4vDxToJfvocsC1BL6pjoYDP8DjugsUWHVyQ6kFHQmh2",
+		S:   "2KqymCfosgEQi3Q6zYLSoqsJSz4mYnxFXNAbMMtPqjSrb",
 	}
 )
 
@@ -29,9 +23,6 @@ func TestNew(t *testing.T) {
 	id, err := New()
 	if err != nil {
 		t.Fatal("There should be no error for creating an id!")
-	}
-	if id == nil {
-		t.Fatal("Id should not be nil!")
 	}
 
 	if !id.CanWrite() {
@@ -43,74 +34,47 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestNewFromString(t *testing.T) {
-	idGarbage, err := NewFromString("GARBAGE")
-	if err == nil || idGarbage != nil {
+func TestNewFromStringWRS(t *testing.T) {
+	_, err := NewFromString("GARBAGE")
+	if err == nil {
 		t.Fatal("Garbage shouldn't be accepted!")
 	}
 
 	id, err := NewFromString(vector1.WRS)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if id == nil {
-		t.Fatal("Couldn't decode string!")
-	}
-	if !id.CanWrite() || !id.CanRead() {
-		t.Fatal("Error with capabilities")
+		t.Fatal("Couldn't create id: ", err)
 	}
 
-	if fmt.Sprintf("%x", id.Pub) != vector1.Pub {
-		t.Fatal("Wrong public key!")
+	if !id.CanWrite() {
+		t.Fatal("id should be able to write")
 	}
 
-	if fmt.Sprintf("%x", id.TorrentInfoHash[:]) != vector1.TIH {
-		t.Fatalf("Wrong torrent info hash!\n\texpected\t%s\n\tactual  \t%x\n",
-			vector1.TIH, id.TorrentInfoHash)
-	}
-}
-
-func TestNewFromStringReadStore(t *testing.T) {
-	id, err := NewFromString(vector1.RS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id.CanWrite() || !id.CanRead() {
-		t.Fatal("Error with capabilities")
-	}
-	if fmt.Sprintf("%x", id.Pub) != vector1.Pub {
-		t.Fatalf("Wrong public key! Expected %s, got %x\n", vector1.Pub, id.Pub)
+	hexpriv := hex.EncodeToString(id.Priv[:])
+	expectedhexpriv := "f96bd82f536527c87d7fde59106f9a8573ea6ec183f67d6509bd666aa2f0da8e710bc5f0cd2538d35e093b9041e083d0072f9ba80e5a7f59e08c029afc788cd9"
+	if hexpriv != expectedhexpriv {
+		t.Fatalf("Invalid priv: expected %s, got %s", expectedhexpriv, hexpriv)
 	}
 
-	if fmt.Sprintf("%x", id.Enc) != vector1.Enc {
-		t.Fatalf("Wrong encryption key!\n\tExpected\t%s\n\tgot\t%x\n",
-			vector1.Enc, id.Enc)
-	}
-	if fmt.Sprintf("%x", id.TorrentInfoHash[:]) != vector1.TIH {
-		t.Fatalf("Wrong torrent info hash!\n\texpected\t%s\n\tactual  \t%x\n",
-			vector1.TIH, id.TorrentInfoHash)
-	}
-}
-
-// Test that the public key from 1 is correctly interpreted
-func TestNewFromStringDerive(t *testing.T) {
-
-	id, err := NewFromString(vector1.WRS)
-	if err != nil {
-		t.Fatal(err)
+	if !id.CanRead() {
+		t.Fatal("id should be able to read")
 	}
 
-	id2, err := NewFromString(id.ReadStoreID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(id.Pub[:], id2.Pub[:]) {
-		t.Fatal("Public keys are different!")
+	hexpub := hex.EncodeToString(id.Pub[:])
+	expectedhexpub := "710bc5f0cd2538d35e093b9041e083d0072f9ba80e5a7f59e08c029afc788cd9"
+	if hexpub != expectedhexpub {
+		t.Fatalf("Invalid pub: expected %s, got %s", expectedhexpub, hexpub)
 	}
 
-	if !bytes.Equal(id.Enc[:], id2.Enc[:]) {
-		t.Fatalf("Encryption keys are different!\n\tfrom WRS:\t%x\n\tfrom RS:\t%x\n", id.Enc,
-			id2.Enc)
+	hexpsk := hex.EncodeToString(id.Psk[:])
+	expectedhexpsk := "75c4442eb37c07ad5df9f131a62046d71d89c3e7210f1e8916b93e2deba611d0"
+	if hexpsk != expectedhexpsk {
+		t.Fatalf("Invalid psk: expected %s, got %s", expectedhexpsk, hexpsk)
 	}
 
+	ih := id.Infohash()
+	hexih := hex.EncodeToString(ih[:])
+	expectedih := "ddb859685f8ea3f7f8e81c9980f4447a0b90d246"
+	if hexih != expectedih {
+		t.Fatalf("Invalid infohash: expected %s, got %s", expectedih, hexih)
+	}
 }

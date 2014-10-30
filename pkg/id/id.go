@@ -1,36 +1,56 @@
 package id
 
 import (
-	"errors"
-	"fmt"
-	"io"
-	"log"
-
 	"bytes"
-
 	"crypto/rand"
 	"crypto/sha1"
+	"errors"
+	"io"
 
 	"code.google.com/p/go.crypto/scrypt"
-	"code.google.com/p/go.crypto/sha3"
+
 	ed "github.com/agl/ed25519"
 	"github.com/crowsonkb/base58"
 )
 
-type CommonFormat [32]byte
-
 type Role byte
 
 var (
-	WriteReadStore Role = 0x1
-	ReadStore      Role = 0x2
-	Store          Role = 0x4
+	ROLE_WRITEREADSTORE Role = 0x1
+	ROLE_READSTORE      Role = 0x2
+	ROLE_STORE          Role = 0x4
+)
+
+var (
+	errInvalidId = errors.New("Invalid id")
 )
 
 type PubKey [ed.PublicKeySize]byte
 type PrivKey [ed.PrivateKeySize]byte
-type EncryptionKey [32]byte
 type PreSharedKey [32]byte
+
+func deriveFromSeed(seed [32]byte) (priv PrivKey, pub PubKey, psk PreSharedKey, err error) {
+	// priv/pub key
+	tmpPub, tmpPriv, err := ed.GenerateKey(bytes.NewReader(seed[:32]))
+	if err != nil {
+		return
+	}
+	priv = *tmpPriv
+	pub = *tmpPub
+	psk, err = deriveScrypt(pub)
+
+	return
+}
+
+func deriveScrypt(in [32]byte) (psk [32]byte, err error) {
+	out, err := scrypt.Key(in[:], in[:], 1<<16, 8, 1, 32)
+	if err != nil {
+		return
+	}
+	copy(psk[:], out)
+
+	return
+}
 
 // The ID structure represents all the information a peer needs to know
 // to be able to participate in a swarm sharing a given directory.
@@ -48,170 +68,163 @@ type PreSharedKey [32]byte
 // cannot read it (because the actual content is encrypted). The
 // corresponding value is StoreID.
 //
-// IDs also contain all information needed to find the corresponding
-// swarm and connect to peers.
+// Finally, when derived a third time, we get a infohash like the
+// Bittorrent ones, that is used to find peers.
 type Id struct {
-	Priv PrivKey
-	Pub  PubKey
+	Priv     PrivKey
+	canWrite bool
 
-	// The encryption key, available for ReadStore and above
-	Enc EncryptionKey
+	Pub     PubKey
+	canRead bool
 
-	// The preshared key, available for Store and above
 	Psk PreSharedKey
-
-	// The base58 encoded ids to be shared with other humans
-	// Some of them may not be filled, depending on the capabilities
-	// associated with this id
-	WriteReadStoreID string
-	ReadStoreID      string
-	StoreID          string
-
-	TorrentInfoHash [sha1.Size]byte
 }
 
-func (id *Id) CanWrite() bool {
-	return id.WriteReadStoreID != ""
-}
-func (id *Id) CanRead() bool {
-	return id.ReadStoreID != ""
-}
-
-func New() (*Id, error) {
-	id := new(Id)
+func New() (Id, error) {
 
 	var randSeed [32]byte
 	_, err := io.ReadFull(rand.Reader, randSeed[:])
 	if err != nil {
-		return nil, err
+		return Id{}, err
 	}
 
-	err = id.fillWRS(randSeed)
+	priv, pub, psk, err := deriveFromSeed(randSeed)
+
+	id := Id{
+		Priv:     priv,
+		canWrite: true,
+
+		Pub:     pub,
+		canRead: true,
+
+		Psk: psk,
+	}
+
 	return id, err
 }
 
-func (id *Id) fillWRS(randSeed [32]byte) error {
-	id.WriteReadStoreID = encodeWriteReadStore(randSeed)
+func (id Id) CanWrite() bool {
+	return id.canWrite
+}
 
-	// priv/pub key
-	var err error
-	var tmpPub *[32]byte
-	var tmpPriv *[64]byte
-	tmpPub, tmpPriv, err = ed.GenerateKey(bytes.NewReader(randSeed[:]))
+func (id Id) CanRead() bool {
+	return id.canRead
+}
+
+func (id Id) WRS() string {
+	if !id.CanWrite() {
+		return ""
+	}
+	wrs := make([]byte, len(id.Priv)+1)
+	wrs[0] = byte(ROLE_WRITEREADSTORE)
+	copy(wrs[1:], id.Priv[:])
+	return base58.Encode(wrs)
+}
+
+func (id Id) RS() string {
+	if !id.CanRead() {
+		return ""
+	}
+	rs := make([]byte, len(id.Pub)+1)
+	rs[0] = byte(ROLE_READSTORE)
+	copy(rs[1:], id.Pub[:])
+	return base58.Encode(rs)
+}
+
+func (id Id) S() string {
+	s := make([]byte, len(id.Psk)+1)
+	s[0] = byte(ROLE_STORE)
+	copy(s[1:], id.Psk[:])
+	return base58.Encode(s)
+}
+
+func (id Id) Infohash() [sha1.Size]byte {
+	out, err := deriveScrypt(id.Psk)
 	if err != nil {
-		return err
+		return [sha1.Size]byte{}
 	}
-	id.Priv = PrivKey(*tmpPriv)
-
-	var sha3Priv [32]byte
-	sha := sha3.NewKeccak512()
-	sha.Write(id.Priv[:])
-	copy(sha3Priv[:], sha.Sum(nil))
-	enc := derive(sha3Priv)
-
-	return id.fillRS(PubKey(*tmpPub), EncryptionKey(enc))
+	var ret [sha1.Size]byte
+	copy(ret[:], out[:sha1.Size])
+	return ret
 }
 
-func (id *Id) fillRS(pub PubKey, enc EncryptionKey) error {
-	id.ReadStoreID = encodeWithRole(CommonFormat(enc), pub, ReadStore)
-	id.Enc = enc
-	psk := derive(CommonFormat(enc))
-	return id.fillS(pub, PreSharedKey(psk))
-}
-
-func (id *Id) fillS(pub PubKey, psk PreSharedKey) error {
-	id.StoreID = encodeWithRole(CommonFormat(psk), pub, Store)
-	id.Psk = psk
-	id.Pub = pub
-
-	// Torrent id
-	forSha1 := derive(CommonFormat(id.Psk))
-	id.TorrentInfoHash = sha1.Sum(forSha1[:])
-
-	return nil
-}
-
-func NewFromString(in string) (*Id, error) {
+func NewFromString(in string) (id Id, err error) {
 	if len(in) <= 1 {
-		return nil, errors.New("Invalid id string")
+		err = errInvalidId
+		return
 	}
-
 	decoded, err := base58.Decode(in)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	id := new(Id)
-	switch Role(decoded[0]) {
-	case WriteReadStore:
-		if len(decoded) != 1+32 {
+	role := Role(decoded[0])
+	switch role {
+	case ROLE_WRITEREADSTORE:
+		if len(decoded[1:]) != ed.PrivateKeySize {
+			err = errInvalidId
 			break
 		}
 
-		var seed [32]byte
-		copy(seed[:], decoded[1:])
-		id.fillWRS(seed)
-		return id, nil
+		priv := decoded[1:]
+		var privId PrivKey
+		copy(privId[:], priv)
 
-	case ReadStore:
-		if len(decoded) != 1+32+32 {
+		pub := priv[32:]
+		var pubId PubKey
+		copy(pubId[:], pub)
+
+		psk, err := deriveScrypt(pubId)
+		if err != nil {
 			break
 		}
 
-		var pub PubKey
-		copy(pub[:], decoded[1:len(pub)+1])
+		id = Id{
+			Priv:     privId,
+			canWrite: true,
 
-		var enc EncryptionKey
-		copy(enc[:], decoded[1+len(pub):])
-		id.fillRS(pub, enc)
-		return id, nil
+			Pub:     pubId,
+			canRead: true,
 
-	case Store:
-		if len(decoded) != 1+32+32 {
+			Psk: psk,
+		}
+
+	case ROLE_READSTORE:
+		if len(decoded[1:]) != ed.PublicKeySize {
+			err = errInvalidId
 			break
 		}
 
-		var pub PubKey
-		copy(pub[:], decoded[1:len(pub)+1])
+		pub := decoded[1:]
+		var pubId PubKey
+		copy(pubId[:], pub)
+
+		psk, err := deriveScrypt(pubId)
+		if err != nil {
+			break
+		}
+
+		id = Id{
+			Pub:     pubId,
+			canRead: true,
+
+			Psk: psk,
+		}
+	case ROLE_STORE:
+		if len(decoded[1:]) != 32 {
+			err = errInvalidId
+			break
+		}
 
 		var psk PreSharedKey
-		copy(psk[:], decoded[1+len(pub)+1:])
-		id.fillS(pub, psk)
-		return id, nil
+		copy(psk[:], decoded[1:])
 
+		id = Id{
+			Psk: psk,
+		}
 	default:
-		return nil, errors.New(fmt.Sprintf("Invalid role: %d", decoded[0]))
+		err = errInvalidId
 	}
 
-	return nil, errors.New(fmt.Sprintf("Invalid len: %d", len(decoded)))
-}
-
-func derive(in CommonFormat) CommonFormat {
-	sha3er := sha3.NewKeccak512()
-	sha3er.Write(in[:])
-	salt := sha3er.Sum(nil)[:8]
-
-	out, err := scrypt.Key(in[:], salt, 1<<16, 8, 1, 32)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var outBlob CommonFormat
-	copy(outBlob[:], out)
-	return outBlob
-}
-
-func encodeWriteReadStore(rand [32]byte) string {
-	cp := make([]byte, len(rand)+1)
-	cp[0] = byte(WriteReadStore)
-	copy(cp[1:], rand[:])
-	return base58.Encode(cp)
-}
-
-func encodeWithRole(blob CommonFormat, pubkey PubKey, r Role) string {
-	cp := make([]byte, len(blob)+ed.PublicKeySize+1)
-	cp[0] = byte(r)
-	copy(cp[1:ed.PublicKeySize+1], pubkey[:])
-	copy(cp[1+ed.PublicKeySize:], blob[:])
-	return base58.Encode(cp)
+	return
 }
