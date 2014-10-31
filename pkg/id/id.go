@@ -148,6 +148,13 @@ func (id Id) Infohash() [sha1.Size]byte {
 	return ret
 }
 
+func (id Id) InfohashSlice() []byte {
+	ih := id.Infohash()
+	ret := make([]byte, sha1.Size)
+	copy(ret, ih[:])
+	return ret
+}
+
 func NewFromString(in string) (id Id, err error) {
 	if len(in) <= 1 {
 		err = errInvalidId

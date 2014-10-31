@@ -1,8 +1,8 @@
 package main
 
 import (
-	natpmp "github.com/jackpal/go-nat-pmp"
 	"fmt"
+	natpmp "github.com/jackpal/go-nat-pmp"
 	"net"
 )
 

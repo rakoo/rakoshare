@@ -12,6 +12,7 @@ import (
 	"runtime/pprof"
 
 	"github.com/rakoo/rakoshare/pkg/id"
+	"github.com/rakoo/rakoshare/pkg/sharesession"
 )
 
 var (
@@ -32,8 +33,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("WriteReadStore: %s\nReadStore: %s\nStore: %s\n",
-			tmpId.WriteReadStoreID, tmpId.ReadStoreID, tmpId.StoreID)
+		fmt.Printf("WriteReadStore:\t%s\n     ReadStore:\t%s\n         Store:\t%s\n",
+			tmpId.WRS(), tmpId.RS(), tmpId.S())
 		return
 	}
 
@@ -47,12 +48,12 @@ func main() {
 		log.Fatal(err)
 	}
 	if shareID.CanWrite() {
-		log.Printf("WriteReadStore: %s\n", shareID.WriteReadStoreID)
+		log.Printf("WriteReadStore: %s\n", shareID.WRS())
 	}
 	if shareID.CanRead() {
-		log.Printf("ReadStore: %s\n", shareID.ReadStoreID)
+		log.Printf("ReadStore: %s\n", shareID.RS())
 	}
-	log.Printf("Store: %s\n", shareID.StoreID)
+	log.Printf("Store: %s\n", shareID.S())
 
 	if flag.NArg() != 0 {
 		log.Println("Don't want arguments")
@@ -85,6 +86,11 @@ func main() {
 	}
 	pathArgs := []string{u.HomeDir, ".local", "share", "rakoshare"}
 	workDir := filepath.Join(pathArgs...)
+	sessionName := hex.EncodeToString(shareID.InfohashSlice()) + ".sql"
+	session, err := sharesession.New(filepath.Join(workDir, sessionName))
+	if err != nil {
+		log.Fatal("Couldn't open session file: ", err)
+	}
 
 	// Watcher
 	if fileDir == "." {
@@ -96,7 +102,10 @@ func main() {
 		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
 		os.Exit(1)
 	}
-	watcher := NewWatcher(workDir, filepath.Clean(fileDir), shareID.CanWrite())
+	watcher, err := NewWatcher(session, filepath.Clean(fileDir), shareID.CanWrite())
+	if err != nil {
+		log.Fatal("Couldn't start watcher: ", err)
+	}
 
 	log.Println("Starting.")
 
@@ -121,13 +130,12 @@ func main() {
 	}
 
 	// Control session
-	controlSession, err := NewControlSession(shareID, listenPort,
-		workDir)
+	controlSession, err := NewControlSession(shareID, listenPort, session)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if *useLPD {
-		lpd.Announce(string(shareID.TorrentInfoHash[:]))
+		lpd.Announce(string(shareID.InfohashSlice()))
 	}
 
 mainLoop:
@@ -165,7 +173,7 @@ mainLoop:
 
 			currentSession.Quit()
 
-			torrentFile := filepath.Join(workDir, fmt.Sprintf("%x", ih))
+			torrentFile := session.GetCurrentTorrent()
 			tentativeSession, err := NewTorrentSession(shareID, torrentFile, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from watched dir: ", err)

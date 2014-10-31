@@ -154,10 +154,10 @@ type TorrentSession struct {
 	trackerLessMode   bool
 
 	miChan chan *MetaInfo
-	Id     *id.Id
+	Id     id.Id
 }
 
-func NewTorrentSession(shareId *id.Id, torrent string, listenPort int) (ts *TorrentSession, err error) {
+func NewTorrentSession(shareId id.Id, torrent string, listenPort int) (ts *TorrentSession, err error) {
 	t := &TorrentSession{
 		Id:              shareId,
 		peers:           make(map[string]*peerState),

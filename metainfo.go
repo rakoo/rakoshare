@@ -57,6 +57,10 @@ func NewMetaInfo(torrent string) (m *MetaInfo, err error) {
 	} else if strings.HasPrefix(torrent, "magnet:") {
 		return NewMetaInfoFromMagnet(torrent)
 	} else {
+		m, err := NewMetaInfoFromContent([]byte(torrent))
+		if err == nil {
+			return m, nil
+		}
 		return NewMetaInfoFromFile(torrent)
 	}
 }

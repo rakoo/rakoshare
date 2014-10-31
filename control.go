@@ -10,15 +10,15 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/rakoo/rakoshare/pkg/id"
+	"github.com/rakoo/rakoshare/pkg/sharesession"
+
 	ed "github.com/agl/ed25519"
 	"github.com/nictuku/dht"
-	"github.com/rakoo/rakoshare/pkg/id"
 	"github.com/zeebo/bencode"
 )
 
@@ -33,7 +33,7 @@ var (
 )
 
 type ControlSession struct {
-	ID     *id.Id
+	ID     id.Id
 	Port   int
 	PeerID string
 
@@ -57,10 +57,10 @@ type ControlSession struct {
 	peers           map[string]*peerState
 	peerMessageChan chan peerMessage
 
-	workDir string
+	session *sharesession.Session
 }
 
-func NewControlSession(shareid *id.Id, listenPort int, workDir string) (*ControlSession, error) {
+func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Session) (*ControlSession, error) {
 	sid := "-tt" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 
 	// TODO: UPnP UDP port mapping.
@@ -73,13 +73,9 @@ func NewControlSession(shareid *id.Id, listenPort int, workDir string) (*Control
 		log.Fatal("DHT node creation error", err)
 	}
 
-	current, err := os.Open(path.Join(workDir, "current"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-
+	current := session.GetCurrentIHMessage()
 	var currentIhMessage IHMessage
-	err = bencode.NewDecoder(current).Decode(&currentIhMessage)
+	err = bencode.NewDecoder(strings.NewReader(current)).Decode(&currentIhMessage)
 	if err != nil {
 		log.Printf("Couldn't decode current message, starting from scratch: %s\n", err)
 	}
@@ -112,10 +108,10 @@ func NewControlSession(shareid *id.Id, listenPort int, workDir string) (*Control
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
 
-		workDir: workDir,
+		session: session,
 	}
 	go cs.dht.Run()
-	cs.dht.PeersRequest(string(cs.ID.TorrentInfoHash[:]), true)
+	cs.dht.PeersRequest(string(cs.ID.InfohashSlice()), true)
 
 	go cs.Run()
 
@@ -133,7 +129,8 @@ func (cs *ControlSession) Header() (header []byte) {
 	// Support Extension Protocol (BEP-0010)
 	header[25] |= 0x10
 
-	copy(header[28:48], cs.ID.TorrentInfoHash[:])
+	ih := cs.ID.Infohash()
+	copy(header[28:48], ih[:])
 	copy(header[48:68], []byte(cs.PeerID))
 
 	cs.header = header
@@ -240,7 +237,7 @@ func (cs *ControlSession) Run() {
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
 			if len(cs.peers) < TARGET_NUM_PEERS {
-				go cs.dht.PeersRequest(string(cs.ID.TorrentInfoHash[:]), true)
+				go cs.dht.PeersRequest(string(cs.ID.InfohashSlice()), true)
 				trackerReportChan <- cs.makeClientStatusReport("")
 			}
 		case <-verboseChan:
@@ -279,7 +276,7 @@ func (cs *ControlSession) Quit() error {
 func (cs *ControlSession) makeClientStatusReport(event string) ClientStatusReport {
 	return ClientStatusReport{
 		Event:    event,
-		InfoHash: string(cs.ID.TorrentInfoHash[:]),
+		InfoHash: string(cs.ID.InfohashSlice()),
 		PeerId:   cs.PeerID,
 		Port:     cs.Port,
 	}
@@ -570,7 +567,7 @@ func (cs *ControlSession) DoPex(msg []byte, p *peerState) (err error) {
 }
 
 func (cs *ControlSession) Matches(ih string) bool {
-	return string(cs.ID.TorrentInfoHash[:]) == ih
+	return string(cs.ID.InfohashSlice()) == ih
 }
 
 func (cs *ControlSession) SetCurrent(ih string) {
@@ -590,19 +587,13 @@ func (cs *ControlSession) SetCurrent(ih string) {
 
 	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(ih+parts[1])))
 
-	// Overwrite "current" file with current value
-	currentFile, err := os.Create(filepath.Join(cs.workDir, "current"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer currentFile.Close()
-
-	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev,
-		cs.ID.Priv)
+	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
 	if err != nil {
 		return
 	}
-	err = bencode.NewEncoder(currentFile).Encode(mess)
+	var buf bytes.Buffer
+	err = bencode.NewEncoder(&buf).Encode(mess)
+	cs.session.SaveIHMessage(buf.Bytes())
 
 	cs.broadcast(ih)
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,10 +15,13 @@ import (
 	"time"
 
 	"github.com/zeebo/bencode"
+
+	"github.com/rakoo/rakoshare/pkg/sharesession"
 )
 
 var (
-	errNewFile = errors.New("Got new file")
+	errNewFile    = errors.New("Got new file")
+	errInvalidDir = errors.New("Invalid watched dir")
 )
 
 type state int
@@ -30,45 +32,16 @@ const (
 )
 
 type Watcher struct {
-	lastModTime time.Time
-	workDir     string
-	watchedDir  string
-	lock        sync.Mutex
+	session    *sharesession.Session
+	watchedDir string
+	lock       sync.Mutex
 
 	PingNewTorrent chan string
 }
 
-func NewWatcher(workDir, watchedDir string, canWrite bool) (w *Watcher) {
-
-	if _, err := os.Stat(workDir); err != nil {
-		if os.IsNotExist(err) {
-			os.MkdirAll(workDir, os.ModeDir|0755)
-		}
-	}
-
-	// Lastmodtime
-	// If we have a current torrent, it's its mod time
-	// Otherwise it's time.Now()
-	defaultNow := time.Now()
-	lastModTime := defaultNow
-
-	currentFile := filepath.Join(workDir, "current")
-	st, err := os.Stat(currentFile)
-	if err != nil && !os.IsNotExist(err) {
-		log.Fatal("Couldn't stat current file: ", err)
-	}
-	if st != nil {
-		lastModTime = st.ModTime()
-	}
-
-	err = clean(workDir)
-	if err != nil {
-		log.Fatal("Couldn't clean workDir dir:", err)
-	}
-
+func NewWatcher(session *sharesession.Session, watchedDir string, canWrite bool) (w *Watcher, err error) {
 	w = &Watcher{
-		lastModTime:    lastModTime,
-		workDir:        workDir,
+		session:        session,
 		watchedDir:     watchedDir,
 		PingNewTorrent: make(chan string),
 	}
@@ -79,54 +52,33 @@ func NewWatcher(workDir, watchedDir string, canWrite bool) (w *Watcher) {
 
 	// Initialization, only if there is something in the dir
 	if _, err := os.Stat(watchedDir); err != nil {
-		return
+		return nil, err
 	}
 
 	dir, err := os.Open(watchedDir)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	names, err := dir.Readdirnames(1)
 	if len(names) == 0 || err != nil && err != io.EOF {
-		return
+		return nil, errInvalidDir
 	}
 
-	ih, err := w.currentTorrent()
 	if err == nil {
 		go func() {
-			w.PingNewTorrent <- ih
+			w.PingNewTorrent <- session.GetCurrentInfohash()
 		}()
 	}
 
 	return
 }
 
-func (w *Watcher) currentTorrent() (ih string, err error) {
-	currentFile := filepath.Join(w.workDir, "current")
-	current, err := os.Open(currentFile)
-	if err != nil && !os.IsNotExist(err) {
-		log.Fatal("Couldn't stat current file: ", err)
-	} else if err == nil {
-		var mess IHMessage
-		err = bencode.NewDecoder(current).Decode(&mess)
-		if err == nil {
-			return mess.Info.InfoHash, nil
-		} else if err != io.EOF {
-			log.Printf("Error when decoding \"current\": %s\n", err)
-			return
-		}
-	}
-
-	// No torrent but there is content. Calculate manually.
-	return w.torrentify()
-}
-
 func (w *Watcher) watch() {
 	var previousState, currentState state
 	currentState = IDEM
 
-	compareTime := w.lastModTime
+	compareTime := w.session.GetLastModTime()
 
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
@@ -187,53 +139,12 @@ func (w *Watcher) torrentify() (ih string, err error) {
 }
 
 func (w *Watcher) saveMetainfo(meta *MetaInfo) error {
-
-	tmpFile, err := ioutil.TempFile(w.workDir, "current.")
+	var buf bytes.Buffer
+	err := bencode.NewEncoder(&buf).Encode(meta)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err = os.Remove(tmpFile.Name())
-		if err != nil {
-			return
-		}
-	}()
-
-	err = tmpFile.Close()
-	if err != nil {
-		return err
-	}
-	ihhex := fmt.Sprintf("%x", meta.InfoHash)
-
-	f, err := os.Create(tmpFile.Name())
-	if err != nil {
-		return err
-	}
-	err = bencode.NewEncoder(f).Encode(meta)
-	if err != nil {
-		return err
-	}
-	f.Close()
-
-	// Move tmp file to final file (with infohash as name)
-	currentTorrent := filepath.Join(w.workDir, ihhex)
-	if st, err := os.Stat(currentTorrent); st != nil {
-		if err = os.Remove(currentTorrent); err != nil {
-			return err
-		}
-	}
-	err = os.Link(tmpFile.Name(), currentTorrent)
-	if err != nil {
-		return err
-	}
-
-	// Update last mod time
-	st, err := os.Stat(currentTorrent)
-	if err != nil {
-		return err
-	}
-	w.lastModTime = st.ModTime()
-
+	w.session.SaveTorrent(buf.Bytes(), meta.InfoHash, time.Now().Format(time.RFC3339))
 	return nil
 }
 
@@ -359,27 +270,6 @@ func (h *BlockHasher) Close() (err error) {
 		return
 	}
 	h.Pieces = h.sha1er.Sum(h.Pieces)
-	return
-}
-
-func clean(dirname string) (err error) {
-	dir, err := os.Open(dirname)
-	if err != nil {
-		return
-	}
-	names, err := dir.Readdirnames(-1)
-	if err != nil {
-		return
-	}
-	for _, name := range names {
-		if strings.HasPrefix(name, "current.") {
-			err = os.Remove(filepath.Join(dirname, name))
-			if err != nil {
-				break
-			}
-		}
-	}
-
 	return
 }
 
