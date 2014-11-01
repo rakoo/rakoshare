@@ -86,7 +86,7 @@ func main() {
 	}
 	pathArgs := []string{u.HomeDir, ".local", "share", "rakoshare"}
 	workDir := filepath.Join(pathArgs...)
-	sessionName := hex.EncodeToString(shareID.InfohashSlice()) + ".sql"
+	sessionName := hex.EncodeToString(shareID.Infohash) + ".sql"
 	session, err := sharesession.New(filepath.Join(workDir, sessionName))
 	if err != nil {
 		log.Fatal("Couldn't open session file: ", err)
@@ -135,7 +135,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if *useLPD {
-		lpd.Announce(string(shareID.InfohashSlice()))
+		lpd.Announce(string(shareID.Infohash))
 	}
 
 mainLoop:

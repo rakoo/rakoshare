@@ -22,14 +22,18 @@ var (
 )
 
 var (
-	errInvalidId = errors.New("Invalid id")
+	errInvalidId       = errors.New("Invalid id")
+	errInvalidInfoHash = errors.New("Programming error: Invalid infohash generated")
 )
 
 type PubKey [ed.PublicKeySize]byte
 type PrivKey [ed.PrivateKeySize]byte
 type PreSharedKey [32]byte
 
-func deriveFromSeed(seed [32]byte) (priv PrivKey, pub PubKey, psk PreSharedKey, err error) {
+// len = 20
+type infohash []byte
+
+func deriveFromSeed(seed [32]byte) (priv PrivKey, pub PubKey, psk PreSharedKey, ih infohash, err error) {
 	// priv/pub key
 	tmpPub, tmpPriv, err := ed.GenerateKey(bytes.NewReader(seed[:32]))
 	if err != nil {
@@ -38,6 +42,16 @@ func deriveFromSeed(seed [32]byte) (priv PrivKey, pub PubKey, psk PreSharedKey, 
 	priv = *tmpPriv
 	pub = *tmpPub
 	psk, err = deriveScrypt(pub)
+
+	if err != nil {
+		return
+	}
+
+	outscrypt, err := deriveScrypt(psk)
+	if err != nil {
+		return
+	}
+	ih = outscrypt[:sha1.Size]
 
 	return
 }
@@ -78,6 +92,9 @@ type Id struct {
 	canRead bool
 
 	Psk PreSharedKey
+
+	// This is automatically generated from Psk. It must be 20 bytes long
+	Infohash []byte
 }
 
 func New() (Id, error) {
@@ -88,7 +105,7 @@ func New() (Id, error) {
 		return Id{}, err
 	}
 
-	priv, pub, psk, err := deriveFromSeed(randSeed)
+	priv, pub, psk, ih, err := deriveFromSeed(randSeed)
 
 	id := Id{
 		Priv:     priv,
@@ -98,6 +115,8 @@ func New() (Id, error) {
 		canRead: true,
 
 		Psk: psk,
+
+		Infohash: ih,
 	}
 
 	return id, err
@@ -138,23 +157,6 @@ func (id Id) S() string {
 	return base58.Encode(s)
 }
 
-func (id Id) Infohash() [sha1.Size]byte {
-	out, err := deriveScrypt(id.Psk)
-	if err != nil {
-		return [sha1.Size]byte{}
-	}
-	var ret [sha1.Size]byte
-	copy(ret[:], out[:sha1.Size])
-	return ret
-}
-
-func (id Id) InfohashSlice() []byte {
-	ih := id.Infohash()
-	ret := make([]byte, sha1.Size)
-	copy(ret, ih[:])
-	return ret
-}
-
 func NewFromString(in string) (id Id, err error) {
 	if len(in) <= 1 {
 		err = errInvalidId
@@ -186,6 +188,11 @@ func NewFromString(in string) (id Id, err error) {
 			break
 		}
 
+		outscrypt, err := deriveScrypt(psk)
+		if err != nil {
+			break
+		}
+
 		id = Id{
 			Priv:     privId,
 			canWrite: true,
@@ -194,6 +201,8 @@ func NewFromString(in string) (id Id, err error) {
 			canRead: true,
 
 			Psk: psk,
+
+			Infohash: outscrypt[:sha1.Size],
 		}
 
 	case ROLE_READSTORE:
@@ -211,11 +220,18 @@ func NewFromString(in string) (id Id, err error) {
 			break
 		}
 
+		outscrypt, err := deriveScrypt(psk)
+		if err != nil {
+			break
+		}
+
 		id = Id{
 			Pub:     pubId,
 			canRead: true,
 
 			Psk: psk,
+
+			Infohash: outscrypt[:sha1.Size],
 		}
 	case ROLE_STORE:
 		if len(decoded[1:]) != 32 {
@@ -226,8 +242,15 @@ func NewFromString(in string) (id Id, err error) {
 		var psk PreSharedKey
 		copy(psk[:], decoded[1:])
 
+		outscrypt, err := deriveScrypt(psk)
+		if err != nil {
+			break
+		}
+
 		id = Id{
 			Psk: psk,
+
+			Infohash: outscrypt[:sha1.Size],
 		}
 	default:
 		err = errInvalidId

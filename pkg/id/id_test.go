@@ -71,8 +71,7 @@ func TestNewFromStringWRS(t *testing.T) {
 		t.Fatalf("Invalid psk: expected %s, got %s", expectedhexpsk, hexpsk)
 	}
 
-	ih := id.Infohash()
-	hexih := hex.EncodeToString(ih[:])
+	hexih := hex.EncodeToString(id.Infohash)
 	expectedih := "ddb859685f8ea3f7f8e81c9980f4447a0b90d246"
 	if hexih != expectedih {
 		t.Fatalf("Invalid infohash: expected %s, got %s", expectedih, hexih)

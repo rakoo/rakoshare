@@ -111,7 +111,7 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 		session: session,
 	}
 	go cs.dht.Run()
-	cs.dht.PeersRequest(string(cs.ID.InfohashSlice()), true)
+	cs.dht.PeersRequest(string(cs.ID.Infohash), true)
 
 	go cs.Run()
 
@@ -129,8 +129,7 @@ func (cs *ControlSession) Header() (header []byte) {
 	// Support Extension Protocol (BEP-0010)
 	header[25] |= 0x10
 
-	ih := cs.ID.Infohash()
-	copy(header[28:48], ih[:])
+	copy(header[28:48], cs.ID.Infohash)
 	copy(header[48:68], []byte(cs.PeerID))
 
 	cs.header = header
@@ -237,7 +236,7 @@ func (cs *ControlSession) Run() {
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
 			if len(cs.peers) < TARGET_NUM_PEERS {
-				go cs.dht.PeersRequest(string(cs.ID.InfohashSlice()), true)
+				go cs.dht.PeersRequest(string(cs.ID.Infohash), true)
 				trackerReportChan <- cs.makeClientStatusReport("")
 			}
 		case <-verboseChan:
@@ -276,7 +275,7 @@ func (cs *ControlSession) Quit() error {
 func (cs *ControlSession) makeClientStatusReport(event string) ClientStatusReport {
 	return ClientStatusReport{
 		Event:    event,
-		InfoHash: string(cs.ID.InfohashSlice()),
+		InfoHash: string(cs.ID.Infohash),
 		PeerId:   cs.PeerID,
 		Port:     cs.Port,
 	}
@@ -567,7 +566,7 @@ func (cs *ControlSession) DoPex(msg []byte, p *peerState) (err error) {
 }
 
 func (cs *ControlSession) Matches(ih string) bool {
-	return string(cs.ID.InfohashSlice()) == ih
+	return string(cs.ID.Infohash) == ih
 }
 
 func (cs *ControlSession) SetCurrent(ih string) {
