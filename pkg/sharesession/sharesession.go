@@ -59,7 +59,9 @@ func (s *Session) GetLastModTime() time.Time {
 	t := s.getFromMeta(Q_SELECT_LASTMODTIME)
 	parsed, err := time.Parse(time.RFC3339, t)
 	if err != nil {
-		return time.Now()
+		// Return the beginning of time, so that all files are after this
+		// date
+		return time.Unix(0, 0)
 	}
 	return parsed
 }
