@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"strconv"
@@ -1052,7 +1051,7 @@ func (t *TorrentSession) DoExtension(msg []byte, p *peerState) (err error) {
 			return
 		}
 
-		nPieces := uint(math.Ceil(float64(h.MetadataSize) / float64(16*1024)))
+		nPieces := h.MetadataSize/METADATA_PIECE_SIZE + 1
 		t.si.ME.Pieces = make([][]byte, nPieces)
 
 		if _, ok := p.theirExtensions["ut_metadata"]; ok {
