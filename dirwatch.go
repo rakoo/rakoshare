@@ -55,21 +55,17 @@ func NewWatcher(session *sharesession.Session, watchedDir string, canWrite bool)
 		return nil, err
 	}
 
-	dir, err := os.Open(watchedDir)
+	st, err := os.Stat(watchedDir)
 	if err != nil {
 		return nil, err
 	}
-
-	names, err := dir.Readdirnames(1)
-	if len(names) == 0 || err != nil && err != io.EOF {
+	if !st.IsDir() {
 		return nil, errInvalidDir
 	}
 
-	if err == nil {
-		go func() {
-			w.PingNewTorrent <- session.GetCurrentInfohash()
-		}()
-	}
+	go func() {
+		w.PingNewTorrent <- session.GetCurrentInfohash()
+	}()
 
 	return
 }
