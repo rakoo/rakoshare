@@ -284,7 +284,7 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 func (p *peerState) sendMetadataRequest(piece int) {
 	metaMessage := MetadataMessage{
 		MsgType: METADATA_REQUEST,
-		Piece:   uint(piece),
+		Piece:   piece,
 	}
 
 	p.sendExtensionMessage("ut_metadata", metaMessage)

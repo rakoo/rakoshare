@@ -1,17 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha1"
-	"io"
 	"log"
 
 	bencode "github.com/jackpal/bencode-go"
 )
 
+type messagetype int
+
 const (
-	METADATA_REQUEST = iota
+	METADATA_REQUEST messagetype = iota
 	METADATA_DATA
 	METADATA_REJECT
 )
@@ -21,19 +21,14 @@ const (
 )
 
 type MetadataMessage struct {
-	MsgType   uint8 "msg_type"
-	Piece     uint  "piece"
-	TotalSize uint  "total_size"
+	MsgType   messagetype "msg_type"
+	Piece     int         "piece"
+	TotalSize int         "total_size"
 }
 
 func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
-	// We need a buffered reader because the raw data is put directly
-	// after the bencoded data, and a simple reader will get all its bytes
-	// eaten. A buffered reader will keep a reference to where the
-	// bdecoding ended.
-	br := bufio.NewReader(bytes.NewReader(msg))
 	var message MetadataMessage
-	err := bencode.Unmarshal(br, &message)
+	err := bencode.Unmarshal(bytes.NewReader(msg), &message)
 	if err != nil {
 		log.Println("Error when parsing metadata: ", err)
 		return
@@ -48,7 +43,7 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 
 		rawInfo := t.m.RawInfo()
 
-		from := int(message.Piece * METADATA_PIECE_SIZE)
+		from := message.Piece * METADATA_PIECE_SIZE
 
 		// Piece asked must be between the first one and the last one.
 		// Note that the last one will most of the time be smaller than
@@ -58,7 +53,7 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 			break
 		}
 
-		to := int(from + METADATA_PIECE_SIZE)
+		to := from + METADATA_PIECE_SIZE
 		if to > len(rawInfo) {
 			to = len(rawInfo)
 		}
@@ -69,8 +64,9 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 		}
 
 		respHeader := MetadataMessage{
-			MsgType: METADATA_DATA,
-			Piece:   message.Piece,
+			MsgType:   METADATA_DATA,
+			Piece:     message.Piece,
+			TotalSize: len(rawInfo),
 		}
 
 		var resp bytes.Buffer
@@ -92,20 +88,23 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 			break
 		}
 
-		var piece bytes.Buffer
-		_, err := io.Copy(&piece, br)
-		if err != nil {
-			log.Println("Error when getting metadata piece: ", err)
+		if message.TotalSize == 0 {
+			log.Println("No metadata size, bailing out")
 			return
 		}
 
-		if int(message.Piece) >= len(t.si.ME.Pieces) {
+		if message.Piece >= len(t.si.ME.Pieces) {
 			log.Printf("Rejecting invalid metadata piece %d, max is %d\n",
 				message.Piece, len(t.si.ME.Pieces)-1)
 			break
 		}
 
-		t.si.ME.Pieces[message.Piece] = piece.Bytes()
+		pieceSize := METADATA_PIECE_SIZE
+		if message.Piece == len(t.si.ME.Pieces)-1 {
+			pieceSize = message.TotalSize - (message.TotalSize/METADATA_PIECE_SIZE)*METADATA_PIECE_SIZE
+		}
+
+		t.si.ME.Pieces[message.Piece] = msg[len(msg)-pieceSize:]
 
 		finished := true
 		for idx, data := range t.si.ME.Pieces {
