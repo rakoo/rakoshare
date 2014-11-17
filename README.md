@@ -135,4 +135,4 @@ Discussion
 
 Please open issues on the github tracker
 (https://github.com/rakoo/rakoshare/issues), or discuss over the mailing
-list: rakoshare served-by librelist.com
+list: rakoshare served-by googlegroups.com
