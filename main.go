@@ -99,8 +99,12 @@ func main() {
 	}
 	_, err = os.Stat(fileDir)
 	if err != nil {
-		fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
-		os.Exit(1)
+		if os.IsNotExist(err) {
+			os.MkdirAll(fileDir, 0744)
+		} else {
+			fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
+			os.Exit(1)
+		}
 	}
 	watcher, err := NewWatcher(session, filepath.Clean(fileDir), shareID.CanWrite())
 	if err != nil {
