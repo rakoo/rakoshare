@@ -24,6 +24,8 @@ Rakoshare might currently eat your data if you're not cautious.
 Tested on Linux.
 
 [x] On-the-fly encryption with [spiped](https://github.com/dchest/spipe)
+[/] Capabilities on the model of Tahoe-LAFS
+      -> still lacking at-rest encryption
 
 Development Roadmap
 -------------------
@@ -32,14 +34,6 @@ Development Roadmap
 
     * Encryption of the data at-rest is desirable to send data to
     untrusted servers.
-
-*  Capabilities
-
-    * The ids should have built-in capabilities, allowing holders to
-      either being able to read and write, only read, or only store the
-      content (without being able to decipher it).
-      Currently, everyone who can enter the swarm can read the content;
-      Store capa is not yet implemneted.
 
 *  Speed
     * Rakoshare is currently naive in how the folders are checked, there
@@ -58,55 +52,44 @@ app:
 Usage Instructions
 ------------------
 
-1. Create a share id tuple:
+1. Create a share session:
 
-  `$ ./rakoshare -gen`
+  `$ ./rakoshare gen -dir <somedir>`
 
   The result will be a list of different ids, each with a different
   capability:
 
   ```
-  WriteReadStore: Zc3U2tGWsardUBxTcSPdSS5aPgwV3rakPe4xcVm6qbC8
-  ReadStore: ENjn1seRA5cWRuFkpzsHuZu6mRDSBLgHviNH9xjgpCpiJg7jZzJ5BqurhTMn9aDJ678kvbkESeki9dS3sZEWEczZ
-  Store: QcTRtY4E2E32k9tHx3X2tN8NLCPjYwWyXMhdh9R1dZ7jok5MJcv61zUGicj5KsbnbfGf5Cogb1xFf9JzyRq5H6s1
+  WriteReadStore: AgpUdzGDo14K7hmkce3pLUXWq3nf1sJfXmmyzeN9vmrNpfRxwZUQjuvhPaZvnysJtB6K2M8tT6f1vvriTko2hP38
+       ReadStore: ovWviooStXvVpgY7Vrd2FryM8pwDHNL9TyUWdsxAUBUv
+           Store: 2CSNWUTbN9arXsF37Eu9HmYbUeD5VukpRsgQnCwRAnMyg
   ```
 
-  or use one that someone gave you
+  It will also create a session file in your ~/.local/share/rakoshare
+  folder. You shouldn't need to look at it.
 
-2. If you receive content from someone else, make sure the directory is
-   created:
+2. Start sharing content:
 
-  `$ mkdir ~/Doc`
+  `$ ./rakoshare share -id <one of the previous id>
 
-3. Start the share with one of the ids you created earlier, or with one
-   you were given:
+  If you use the WriteReadStore id, any change you make will be
+  propagated. If you use the ReadStore id, no local changes will be
+  propagated. The Store id currently works as a ReadStore id.
 
-  `$ rakoshare -fileDir ~/Doc -id <the_previous_id> -useLPD=true -useDHT=true`
+  Send an Id to someone else, and start sharing !
 
-4. The share is started. If you used a WriteReadStore id, then you have
-   the capability of writing things that will be spread to everyone;
-   otherwise you will only be able to receive from others.
+2. If you receive content from someone else, start receiving and sharing content:
+
+  `$ ./rakoshare share -id <the id you received> -dir <where to store data>`
 
 For more info:
 
-    rakoshare -help
+    rakoshare help
 
 Demo !
 ------
 
-I am currently fetching the /r/earthPorn rss on reddit
-(http://reddit.com/r/earthPorn) every hour, and scrape the pics in some
-folder. This folder is accessible with the following ReadStore id:
-
-    BPpBrTpPNsHSSEmjDJhj5Q4GiUy96992dUNua79b4fKZ8kGtty281gqhPEFEQaN8ZZSDXGp4mCZFnd3GfjvtUJYJ
-
-This means that you should be able to get a folder of nice
-wallpaper-worthy pics by running this command:
-
-    $ rakoshare -fileDir ~/redditEarthPorn -id BPpBrTpPNsHSSEmjDJhj5Q4GiUy96992dUNua79b4fKZ8kGtty281gqhPEFEQaN8ZZSDXGp4mCZFnd3GfjvtUJYJ -useDHT=true
-
-Feel free to try it and don't hesitate to send your feedbacks !
-
+Demo is down, working on it.
 
 Third-party Packages
 --------------------
@@ -124,6 +107,8 @@ https://github.com/nictuku/dht      - Distributed Hash Table
 https://github.com/nictuku/nettools - Network utilities
 
 https://github.com/dchest/spipe     - pure-go [spiped](https://www.tarsnap.com/spiped.html) implementation
+
+https://github.com/codegangsta/cli  - CLI application builder package
 
 Related Projects
 ----------------
