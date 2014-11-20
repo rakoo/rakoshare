@@ -13,52 +13,20 @@ import (
 
 	"github.com/rakoo/rakoshare/pkg/id"
 	"github.com/rakoo/rakoshare/pkg/sharesession"
+
+	"github.com/codegangsta/cli"
 )
 
 var (
 	cpuprofile = flag.String("cpuprofile", "", "If not empty, collects CPU profile samples and writes the profile to the given file before the program exits")
 	memprofile = flag.String("memprofile", "", "If not empty, writes memory heap allocations to the given file before the program exits")
-	idstring   = flag.String("id", "", "The id of the share")
 	generate   = flag.Bool("gen", false, "If true, generate a 3-tuple of ids")
 )
 
 var torrent string
 
 func main() {
-	flag.Usage = usage
 	flag.Parse()
-
-	if *generate {
-		tmpId, err := id.New()
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("WriteReadStore:\t%s\n     ReadStore:\t%s\n         Store:\t%s\n",
-			tmpId.WRS(), tmpId.RS(), tmpId.S())
-		return
-	}
-
-	if *idstring == "" {
-		fmt.Println("Missing a share id")
-		usage()
-		os.Exit(2)
-	}
-	shareID, err := id.NewFromString(*idstring)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if shareID.CanWrite() {
-		log.Printf("WriteReadStore: %s\n", shareID.WRS())
-	}
-	if shareID.CanRead() {
-		log.Printf("ReadStore: %s\n", shareID.RS())
-	}
-	log.Printf("Store: %s\n", shareID.S())
-
-	if flag.NArg() != 0 {
-		log.Println("Don't want arguments")
-		usage()
-	}
 
 	if *cpuprofile != "" {
 		cpuf, err := os.Create(*cpuprofile)
@@ -86,27 +54,98 @@ func main() {
 	}
 	pathArgs := []string{u.HomeDir, ".local", "share", "rakoshare"}
 	workDir := filepath.Join(pathArgs...)
+
+	app := cli.NewApp()
+	app.Name = "rakoshare"
+	app.Usage = "Share content with everyone"
+	app.Commands = []cli.Command{
+		{
+			Name:  "gen",
+			Usage: "Generate a share with a given target directory. Outputs the 3-tuple of id",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "dir",
+					Value: "",
+					Usage: "The directory to share",
+				},
+			},
+			Action: func(c *cli.Context) {
+				if c.String("dir") == "" {
+					fmt.Println("Need a valid directory!")
+					fmt.Println("Use the -dir flag")
+					return
+				}
+				err := Generate(c.String("dir"), workDir)
+				if err != nil {
+					fmt.Println(err)
+				}
+			},
+		},
+		{
+			Name:  "share",
+			Usage: "Share the given id",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "id",
+					Value: "",
+					Usage: "The id to share",
+				},
+				cli.StringFlag{
+					Name:  "dir",
+					Value: "",
+					Usage: "If not empty, the dir to share",
+				},
+			},
+			Action: func(c *cli.Context) {
+				if c.String("id") == "" {
+					fmt.Println("Need an id!")
+					return
+				}
+				Share(c.String("id"), workDir, c.String("dir"))
+			},
+		},
+	}
+
+	app.Run(os.Args)
+}
+
+func Share(cliId string, workDir string, cliTarget string) {
+	shareID, err := id.NewFromString(cliId)
+	if err != nil {
+		fmt.Printf("Couldn't generate shareId: %s\n", err)
+		return
+	}
 	sessionName := hex.EncodeToString(shareID.Infohash) + ".sql"
 	session, err := sharesession.New(filepath.Join(workDir, sessionName))
 	if err != nil {
 		log.Fatal("Couldn't open session file: ", err)
 	}
 
+	fmt.Printf("WriteReadStore:\t%s\n     ReadStore:\t%s\n         Store:\t%s\n",
+		shareID.WRS(), shareID.RS(), shareID.S())
+
 	// Watcher
-	if fileDir == "." {
-		fmt.Println("fileDir option is missing")
-		flag.Usage()
+	target := session.GetTarget()
+	if target == "" {
+		if cliTarget == "" {
+			fmt.Println("Need a folder to share!")
+			return
+		}
+		target = cliTarget
+		session.SaveSession(target, shareID)
+	} else if cliTarget != "" {
+		fmt.Printf("Can't override folder already set to %s\n", target)
 	}
-	_, err = os.Stat(fileDir)
+	_, err = os.Stat(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			os.MkdirAll(fileDir, 0744)
+			os.MkdirAll(target, 0744)
 		} else {
-			fmt.Printf("%s is an invalid dir: %s\n", fileDir, err)
+			fmt.Printf("%s is an invalid dir: %s\n", target, err)
 			os.Exit(1)
 		}
 	}
-	watcher, err := NewWatcher(session, filepath.Clean(fileDir), shareID.CanWrite())
+	watcher, err := NewWatcher(session, filepath.Clean(target), shareID.CanWrite())
 	if err != nil {
 		log.Fatal("Couldn't start watcher: ", err)
 	}
@@ -178,9 +217,11 @@ mainLoop:
 			currentSession.Quit()
 
 			torrentFile := session.GetCurrentTorrent()
-			tentativeSession, err := NewTorrentSession(shareID, torrentFile, listenPort)
+			tentativeSession, err := NewTorrentSession(shareID, target, torrentFile, listenPort)
 			if err != nil {
-				log.Println("Couldn't start new session from watched dir: ", err)
+				if !os.IsNotExist(err) {
+					log.Println("Couldn't start new session from watched dir: ", err)
+				}
 
 				// Fallback to an emptytorrent, because the previous one is
 				// invalid; hope it will be ok next time !
@@ -198,7 +239,7 @@ mainLoop:
 			currentSession.Quit()
 
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
-			tentativeSession, err := NewTorrentSession(shareID, magnet, listenPort)
+			tentativeSession, err := NewTorrentSession(shareID, target, magnet, listenPort)
 			if err != nil {
 				log.Println("Couldn't start new session from announce: ", err)
 				currentSession = EmptyTorrent{}
@@ -210,7 +251,7 @@ mainLoop:
 		case peer := <-controlSession.NewPeers:
 			if currentSession.IsEmpty() {
 				magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", controlSession.currentIH)
-				tentativeSession, err := NewTorrentSession(shareID, magnet, listenPort)
+				tentativeSession, err := NewTorrentSession(shareID, target, magnet, listenPort)
 				if err != nil {
 					log.Printf("Couldn't start new session with new peer: %s\n", err)
 					break
@@ -234,13 +275,6 @@ func (et EmptyTorrent) DoTorrent()                  {}
 func (et EmptyTorrent) hintNewPeer(peer string)     {}
 func (et EmptyTorrent) IsEmpty() bool               { return true }
 func (et EmptyTorrent) NewMetaInfo() chan *MetaInfo { return nil }
-
-func usage() {
-	log.Printf("usage: Taipei-Torrent [options] (torrent-file | torrent-url)")
-
-	flag.PrintDefaults()
-	os.Exit(2)
-}
 
 func listenSigInt() chan os.Signal {
 	c := make(chan os.Signal)

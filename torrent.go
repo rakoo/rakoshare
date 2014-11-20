@@ -47,12 +47,10 @@ const (
 
 // Should be overriden by flag. Not thread safe.
 var gateway string
-var fileDir string
 var useDHT bool
 var trackerLessMode bool
 
 func init() {
-	flag.StringVar(&fileDir, "fileDir", ".", "path to directory where files are stored")
 	// If the port is 0, picks up a random port - but the DHT will keep
 	// running on port 0 because ListenUDP doesn't do that.
 	// Don't use port 6881 which blacklisted by some trackers.
@@ -152,11 +150,14 @@ type TorrentSession struct {
 	quit              chan bool
 	trackerLessMode   bool
 
+	// Where the data lives
+	target string
+
 	miChan chan *MetaInfo
 	Id     id.Id
 }
 
-func NewTorrentSession(shareId id.Id, torrent string, listenPort int) (ts *TorrentSession, err error) {
+func NewTorrentSession(shareId id.Id, target, torrent string, listenPort int) (ts *TorrentSession, err error) {
 	t := &TorrentSession{
 		Id:              shareId,
 		peers:           make(map[string]*peerState),
@@ -164,6 +165,7 @@ func NewTorrentSession(shareId id.Id, torrent string, listenPort int) (ts *Torre
 		activePieces:    make(map[int]*ActivePiece),
 		quit:            make(chan bool),
 		miChan:          make(chan *MetaInfo),
+		target:          target,
 	}
 
 	if useDHT {
@@ -236,7 +238,7 @@ func (t *TorrentSession) load() error {
 		t.trackerLessMode = trackerLessMode
 	}
 
-	t.fileStore, t.totalSize, err = NewFileStore(t.m.Info, fileDir)
+	t.fileStore, t.totalSize, err = NewFileStore(t.m.Info, t.target)
 	if err != nil {
 		log.Fatal("Couldn't create filestore: ", err)
 	}
