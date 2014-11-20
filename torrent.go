@@ -736,6 +736,7 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 			t.goodPieces++
 			log.Println("Have", t.goodPieces, "of", t.totalPieces, "pieces.")
 			if t.goodPieces == t.totalPieces {
+				log.Println("We're complete!")
 				if !t.trackerLessMode {
 					t.fetchTrackerInfo("completed")
 				}
