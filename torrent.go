@@ -54,7 +54,7 @@ func init() {
 	// If the port is 0, picks up a random port - but the DHT will keep
 	// running on port 0 because ListenUDP doesn't do that.
 	// Don't use port 6881 which blacklisted by some trackers.
-	flag.BoolVar(&useDHT, "useDHT", false, "Use DHT to get peers.")
+	flag.BoolVar(&useDHT, "useDHT", true, "Use DHT to get peers.")
 	flag.BoolVar(&trackerLessMode, "trackerLessMode", true, "Do not get peers from the tracker. Good for "+
 		"testing the DHT mode.")
 	flag.StringVar(&gateway, "gateway", "", "IP Address of gateway.")
