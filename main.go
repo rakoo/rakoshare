@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 
 	"github.com/rakoo/rakoshare/pkg/id"
 	"github.com/rakoo/rakoshare/pkg/sharesession"
@@ -104,9 +105,61 @@ func main() {
 				Share(c.String("id"), workDir, c.String("dir"))
 			},
 		},
+		{
+			Name:  "list",
+			Usage: "List availables shares",
+			Action: func(c *cli.Context) {
+				shares := List(workDir)
+				for _, s := range shares {
+					fmt.Printf("Sharing %s: \n", s.folder)
+					fmt.Printf("\tWriteReadStore:\t%s\n\t     ReadStore:\t%s\n\t         Store:\t%s\n",
+						s.wrs, s.rs, s.s)
+					fmt.Println()
+				}
+			},
+		},
 	}
 
 	app.Run(os.Args)
+}
+
+type share struct {
+	folder string
+	wrs    string
+	rs     string
+	s      string
+}
+
+func List(workDir string) []share {
+	dir, err := os.Open(workDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	names, err := dir.Readdirnames(-1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	shares := make([]share, 0, len(names))
+	for _, n := range names {
+		if !strings.HasSuffix(n, ".sql") {
+			continue
+		}
+		session, err := sharesession.New(filepath.Join(workDir, n))
+		if err != nil {
+			continue
+		}
+		id := session.GetShareId()
+
+		shares = append(shares, share{
+			folder: session.GetTarget(),
+			wrs:    id.WRS(),
+			rs:     id.RS(),
+			s:      id.S(),
+		})
+	}
+
+	return shares
 }
 
 func Share(cliId string, workDir string, cliTarget string) {

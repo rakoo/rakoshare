@@ -91,6 +91,25 @@ func (s *Session) GetTarget() string {
 	return s.getFromMeta(Q_SELECT_FOLDER)
 }
 
+func (sess *Session) GetShareId() id.Id {
+	var wrs, rs, s string
+	err := sess.db.QueryRow(`SELECT wrs, rs, s FROM meta`).Scan(&wrs, &rs, &s)
+	if err != nil {
+		return id.Id{}
+	}
+	var ret id.Id
+	switch {
+	case wrs != "":
+		ret, _ = id.NewFromString(wrs)
+	case rs != "":
+		ret, _ = id.NewFromString(rs)
+	case s != "":
+		ret, _ = id.NewFromString(s)
+	}
+
+	return ret
+}
+
 func (s *Session) getFromMeta(query string) string {
 	var value string
 	err := s.db.QueryRow(query).Scan(&value)
