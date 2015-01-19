@@ -196,7 +196,7 @@ type SessionInfo struct {
 	Downloaded int64
 	Left       int64
 
-	UseDHT      bool
+	//UseDHT      bool
 	FromMagnet  bool
 	HaveTorrent bool
 

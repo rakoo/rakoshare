@@ -25,12 +25,11 @@ import (
 var (
 	// This error is returned when the incoming message is not of correct
 	// type, ie EXTENSION (which is 20)
-	errInvalidType = errors.New("invalid message type")
-)
-
-var (
+	errInvalidType     = errors.New("invalid message type")
 	errMetadataMessage = errors.New("Couldn't create metadata message")
 )
+
+var useDHT = flag.Bool("useDHT", true, "Use DHT to get peers")
 
 type ControlSession struct {
 	ID     id.Id
