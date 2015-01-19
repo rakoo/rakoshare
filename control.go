@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -56,10 +57,12 @@ type ControlSession struct {
 	peers           map[string]*peerState
 	peerMessageChan chan peerMessage
 
+	trackers []string
+
 	session *sharesession.Session
 }
 
-func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Session) (*ControlSession, error) {
+func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Session, trackers []string) (*ControlSession, error) {
 	sid := "-tt" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 
 	// TODO: UPnP UDP port mapping.
@@ -106,6 +109,8 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
+
+		trackers: trackers,
 
 		session: session,
 	}
@@ -160,26 +165,22 @@ func (cs *ControlSession) Run() {
 	quitDeadlock := make(chan struct{})
 	go cs.deadlockDetector(heartbeat, quitDeadlock)
 
-	rechokeChan := time.Tick(1 * time.Second)
+	rechokeChan := time.Tick(10 * time.Second)
 	verboseChan := time.Tick(10 * time.Minute)
 	keepAliveChan := time.Tick(60 * time.Second)
 
 	// Start out polling tracker every 20 seconds until we get a response.
 	// Maybe be exponential backoff here?
-	var retrackerChan <-chan time.Time
-	retrackerChan = time.Tick(20 * time.Second)
+	retrackerChan := time.Tick(20 * time.Second)
 	trackerInfoChan := make(chan *TrackerResponse)
-	trackerReportChan := make(chan ClientStatusReport)
-	startTrackerClient("", [][]string{}, trackerInfoChan, trackerReportChan)
 
-	trackerReportChan <- cs.makeClientStatusReport("started")
-
-	log.Println("[CONTROL] Start")
+	trackerClient := NewTrackerClient("", [][]string{cs.trackers})
+	trackerClient.Announce(cs.makeClientStatusReport("started"))
 
 	for {
 		select {
 		case <-retrackerChan:
-			trackerReportChan <- cs.makeClientStatusReport("")
+			trackerClient.Announce(cs.makeClientStatusReport(""))
 		case dhtInfoHashPeers := <-cs.dht.PeersRequestResults:
 			newPeerCount := 0
 			// key = infoHash. The torrent client currently only
@@ -194,8 +195,8 @@ func (cs *ControlSession) Run() {
 					}
 				}
 			}
-			// log.Println("Contacting", newPeerCount, "new peers (thanks DHT!)")
 		case ti := <-trackerInfoChan:
+			log.Printf("Got response from tracker: %#v\n", ti)
 			newPeerCount := 0
 			for _, peer := range ti.Peers {
 				if _, ok := cs.peers[peer]; !ok {
@@ -236,7 +237,6 @@ func (cs *ControlSession) Run() {
 			heartbeat <- struct{}{}
 			if len(cs.peers) < TARGET_NUM_PEERS {
 				go cs.dht.PeersRequest(string(cs.ID.Infohash), true)
-				trackerReportChan <- cs.makeClientStatusReport("")
 			}
 		case <-verboseChan:
 			log.Println("[CONTROL] Peers:", len(cs.peers))
@@ -317,8 +317,6 @@ func (cs *ControlSession) connectToPeer(peer string) {
 	}
 	// log.Println("Connected to", peer)
 	cs.AddPeer(btconn)
-
-	cs.NewPeers <- peer
 }
 
 func (cs *ControlSession) hintNewPeer(peer string) {

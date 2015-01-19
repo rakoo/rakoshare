@@ -7,15 +7,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/nictuku/dht"
-	"github.com/nictuku/nettools"
 	"github.com/zeebo/bencode"
 )
 
@@ -175,20 +171,6 @@ func getMetaInfo(torrent string) (metaInfo *MetaInfo, err error) {
 	return NewMetaInfo(torrent)
 }
 
-type TrackerResponse struct {
-	FailureReason  string "failure reason"
-	WarningMessage string "warning message"
-	Interval       time.Duration
-	MinInterval    time.Duration "min interval"
-	TrackerId      string        "tracker id"
-	Complete       int
-	Incomplete     int
-	PeersRaw       string `bencode:"peers"`
-	Peers          []string
-	Peers6Raw      string `bencode:"peers6"`
-	Peers6         []string
-}
-
 type SessionInfo struct {
 	PeerId     string
 	Port       int
@@ -207,56 +189,4 @@ type SessionInfo struct {
 type MetaDataExchange struct {
 	Transferring bool
 	Pieces       [][]byte
-}
-
-func getTrackerInfo(url string) (tr *TrackerResponse, err error) {
-	r, err := proxyHttpGet(url)
-	if err != nil {
-		return
-	}
-	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		data, _ := ioutil.ReadAll(r.Body)
-		reason := "Bad Request " + string(data)
-		log.Println(reason)
-		err = errors.New(reason)
-		return
-	}
-	var tr2 TrackerResponse
-	err = bencode.NewDecoder(r.Body).Decode(&tr2)
-	r.Body.Close()
-	if err != nil {
-		return
-	}
-
-	// Decode peers
-	if len(tr2.PeersRaw) > 0 {
-		const peerLen = 6
-		nPeers := len(tr2.PeersRaw) / peerLen
-		log.Println("Tracker gave us", nPeers, "peers")
-		tr2.Peers = make([]string, nPeers)
-		for i := 0; i < len(tr2.PeersRaw); i += peerLen {
-			peer := nettools.BinaryToDottedPort(tr2.PeersRaw[i : i+peerLen])
-			tr2.Peers[i] = peer
-		}
-	}
-
-	// Decode peers6
-
-	if len(tr2.Peers6Raw) > 0 {
-		const peerLen = 18
-		nPeers := len(tr2.Peers6Raw) / peerLen
-		log.Println("Tracker gave us", nPeers, "IPv6 peers")
-		tr2.Peers6 = make([]string, nPeers)
-		for i := 0; i < len(tr2.Peers6Raw); i += peerLen {
-			peerEntry := tr2.Peers6Raw[i : i+peerLen]
-			host := net.IP(peerEntry[0:16])
-			port := int((uint(peerEntry[16]) << 8) | uint(peerEntry[17]))
-			peer := net.JoinHostPort(host.String(), strconv.Itoa(port))
-			tr2.Peers6[i] = peer
-		}
-	}
-
-	tr = &tr2
-	return
 }

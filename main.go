@@ -96,13 +96,19 @@ func main() {
 					Value: "",
 					Usage: "If not empty, the dir to share",
 				},
+				cli.StringSliceFlag{
+					Name:  "tracker",
+					Value: &cli.StringSlice{},
+					Usage: "A tracker to connect to",
+				},
 			},
 			Action: func(c *cli.Context) {
 				if c.String("id") == "" {
 					fmt.Println("Need an id!")
 					return
 				}
-				Share(c.String("id"), workDir, c.String("dir"))
+				Share(c.String("id"), workDir, c.String("dir"),
+					c.StringSlice("tracker"))
 			},
 		},
 		{
@@ -226,7 +232,7 @@ func Share(cliId string, workDir string, cliTarget string) {
 	}
 
 	// Control session
-	controlSession, err := NewControlSession(shareID, listenPort, session)
+	controlSession, err := NewControlSession(shareID, listenPort, session, trackers)
 	if err != nil {
 		log.Fatal(err)
 	}
