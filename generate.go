@@ -23,5 +23,9 @@ func Generate(target, workDir string) error {
 		return err
 	}
 
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return err
+	}
 	return session.SaveSession(target, tmpId)
 }

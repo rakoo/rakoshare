@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -11,9 +12,11 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
+	"time"
 
 	"github.com/rakoo/rakoshare/pkg/id"
 	"github.com/rakoo/rakoshare/pkg/sharesession"
+	"github.com/zeebo/bencode"
 
 	"github.com/codegangsta/cli"
 )
@@ -117,7 +120,7 @@ func main() {
 			Action: func(c *cli.Context) {
 				shares := List(workDir)
 				for _, s := range shares {
-					fmt.Printf("Sharing %s: \n", s.folder)
+					fmt.Printf("Sharing %s in %s: \n", s.folder, s.sessionFile)
 					fmt.Printf("\tWriteReadStore:\t%s\n\t     ReadStore:\t%s\n\t         Store:\t%s\n",
 						s.wrs, s.rs, s.s)
 					fmt.Println()
@@ -130,10 +133,11 @@ func main() {
 }
 
 type share struct {
-	folder string
-	wrs    string
-	rs     string
-	s      string
+	sessionFile string
+	folder      string
+	wrs         string
+	rs          string
+	s           string
 }
 
 func List(workDir string) []share {
@@ -158,17 +162,18 @@ func List(workDir string) []share {
 		id := session.GetShareId()
 
 		shares = append(shares, share{
-			folder: session.GetTarget(),
-			wrs:    id.WRS(),
-			rs:     id.RS(),
-			s:      id.S(),
+			sessionFile: filepath.Join(workDir, n),
+			folder:      session.GetTarget(),
+			wrs:         id.WRS(),
+			rs:          id.RS(),
+			s:           id.S(),
 		})
 	}
 
 	return shares
 }
 
-func Share(cliId string, workDir string, cliTarget string) {
+func Share(cliId string, workDir string, cliTarget string, trackers []string) {
 	shareID, err := id.NewFromString(cliId)
 	if err != nil {
 		fmt.Printf("Couldn't generate shareId: %s\n", err)
