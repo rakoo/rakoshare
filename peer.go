@@ -82,11 +82,34 @@ func NewPeerState(conn net.Conn) *peerState {
 	writeChan := make(chan []byte)
 	writeChan2 := make(chan []byte)
 	go queueingWriter(writeChan, writeChan2)
-	return &peerState{writeChan: writeChan, writeChan2: writeChan2, conn: conn,
-		am_choking: true, peer_choking: true,
+
+	ps := &peerState{
+		writeChan:            writeChan,
+		writeChan2:           writeChan2,
+		conn:                 conn,
+		am_choking:           true,
+		peer_choking:         true,
 		peer_requests:        make(map[uint64]bool, MAX_PEER_REQUESTS),
 		our_requests:         make(map[uint64]time.Time, MAX_OUR_REQUESTS),
-		can_receive_bitfield: true}
+		can_receive_bitfield: true,
+	}
+
+	// Close connection after a 10 seconds inactivity
+	go func() {
+		for _ = range time.Tick(10 * time.Second) {
+			ps.conn.SetReadDeadline(time.Now())
+			_, err := ps.conn.Read([]byte{})
+			neterr, ok := err.(net.Error)
+			timeout := ok && neterr.Timeout()
+			if err == io.EOF || timeout {
+				log.Printf("%s has closed remotely, closing locally", conn.RemoteAddr().String())
+			} else {
+				ps.conn.SetReadDeadline(time.Time{})
+			}
+		}
+	}()
+
+	return ps
 }
 
 func (p *peerState) Close() {
