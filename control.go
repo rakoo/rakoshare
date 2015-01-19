@@ -416,15 +416,22 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 	}
 
 	// Now that handshake is done and we know their extension, send the
-	// current ih message
-	message, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
-	if err != nil {
-		log.Println(err)
-	} else {
-		p.sendExtensionMessage("bs_metadata", message)
+	// current ih message, if we have one
+	//
+	// We need to de-serialize the current ih message saved in db before
+	// passing it to the sender otherwise it is serialized into a string
+	var currentIHMessage IHMessage
+	currentFromSession := cs.session.GetCurrentIHMessage()
+	if len(currentFromSession) > 0 {
+		err = bencode.NewDecoder(strings.NewReader(currentFromSession)).Decode(&currentIHMessage)
+		if err != nil {
+			log.Println("Error deserializing current ih message to be resent", err)
+		} else {
+			p.sendExtensionMessage("bs_metadata", currentIHMessage)
+		}
 	}
 
-	return
+	return nil
 }
 
 func (cs *ControlSession) DoOther(msg []byte, p *peerState) (err error) {
@@ -463,16 +470,14 @@ type NewInfo struct {
 }
 
 func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, err error) {
-	mm = IHMessage{
-		Info: NewInfo{
-			InfoHash: ih,
-			Rev:      rev,
-		},
-		Port: port,
+
+	info := NewInfo{
+		InfoHash: ih,
+		Rev:      rev,
 	}
 
 	var buf bytes.Buffer
-	err = bencode.NewEncoder(&buf).Encode(mm.Info)
+	err = bencode.NewEncoder(&buf).Encode(info)
 	if err != nil {
 		log.Printf("[CONTROL] Couldn't encode ih message, returning now")
 		return mm, err
@@ -482,15 +487,19 @@ func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, er
 	copy(privarg[:], priv[:])
 
 	sig := ed.Sign(privarg, buf.Bytes())
-	mm.Sig = string(sig[:])
 
-	return
+	return IHMessage{
+		Info: info,
+		Port: port,
+		Sig:  string(sig[:]),
+	}, nil
 }
 
 func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	var message IHMessage
 	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&message)
 	if err != nil {
+		log.Println("Couldn't decode metadata message: ", err)
 		return
 	}
 	if message.Info.InfoHash == "" || message.Port == 0 {
@@ -506,33 +515,40 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	port := strconv.Itoa(int(message.Port))
 	peer := ip + ":" + port
 
+	if cs.currentIH == message.Info.InfoHash {
+		return
+	}
+
+	var tmpInfoBuf bytes.Buffer
+	err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
+	if err != nil {
+		log.Printf("[CONTROL] Couldn't encode ih message, returning now")
+		return err
+	}
+
+	pub := [ed.PublicKeySize]byte(cs.ID.Pub)
+	sig := new([ed.SignatureSize]byte)
+	copy(sig[:], []byte(message.Sig))
+	ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), sig)
+	if !ok {
+		log.Printf("[CONTROL] Bad signature")
+		return errors.New("Bad Signature")
+	}
+
+	cs.session.SaveIHMessage(tmpInfoBuf.Bytes())
+	cs.Torrents <- Announce{
+		infohash: message.Info.InfoHash,
+		peer:     peer,
+	}
+
+	cs.currentIH = message.Info.InfoHash
+
+	cs.broadcast(message)
+
 	go func() {
 		cs.NewPeers <- peer
 	}()
 
-	if cs.currentIH != message.Info.InfoHash {
-
-		var tmpInfoBuf bytes.Buffer
-		err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
-		if err != nil {
-			log.Printf("[CONTROL] Couldn't encode ih message, returning now")
-			return err
-		}
-
-		pub := [ed.PublicKeySize]byte(cs.ID.Pub)
-		sig := new([ed.SignatureSize]byte)
-		copy(sig[:], []byte(message.Sig))
-		ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), sig)
-		if !ok {
-			log.Printf("[CONTROL] Bad signature")
-			return errors.New("Bad Signature")
-		}
-
-		cs.Torrents <- Announce{
-			infohash: message.Info.InfoHash,
-			peer:     peer,
-		}
-	}
 	return
 }
 
@@ -591,20 +607,15 @@ func (cs *ControlSession) SetCurrent(ih string) {
 	err = bencode.NewEncoder(&buf).Encode(mess)
 	cs.session.SaveIHMessage(buf.Bytes())
 
-	cs.broadcast(ih)
+	cs.broadcast(mess)
 }
 
-func (cs *ControlSession) broadcast(ih string) {
+func (cs *ControlSession) broadcast(message IHMessage) {
 	for _, ps := range cs.peers {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}
 
-		message, err := NewIHMessage(int64(cs.Port), ih, cs.rev, cs.ID.Priv)
-		if err != nil {
-			log.Println(err)
-		} else {
-			ps.sendExtensionMessage("bs_metadata", message)
-		}
+		ps.sendExtensionMessage("bs_metadata", message)
 	}
 }
