@@ -34,7 +34,6 @@ type fileStore struct {
 }
 
 func (fe *fileEntry) open(name string, length int64) (err error) {
-
 	partname := name + ".part"
 	_, parterr := os.Stat(partname)
 	if parterr == nil {
@@ -57,6 +56,19 @@ func (fe *fileEntry) open(name string, length int64) (err error) {
 	}
 
 	if needToRetrieve {
+
+		// Cap filename to 60 unicode characters because most filesystems have
+		// a limit of 255 bytes (see
+		// https://en.wikipedia.org/wiki/Comparison_of_file_systems) so we
+		// take a very high margin by expecting each character to be on 4
+		// bytes (theoretically possible with UTF-8)
+		ext := path.Ext(name)
+		rawname := strings.Replace(name, ext, "", 1)
+		if len(rawname) > 60 {
+			rawname = rawname[:60] + "[...]"
+		}
+		partname = rawname + ext + ".part"
+
 		f, err := os.Create(partname)
 		defer f.Close()
 		if err != nil {
