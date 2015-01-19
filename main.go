@@ -183,7 +183,6 @@ func Share(cliId string, workDir string, cliTarget string) {
 	fmt.Printf("WriteReadStore:\t%s\n     ReadStore:\t%s\n         Store:\t%s\n",
 		shareID.WRS(), shareID.RS(), shareID.S())
 
-	// Watcher
 	target := session.GetTarget()
 	if target == "" {
 		if cliTarget == "" {
@@ -204,12 +203,20 @@ func Share(cliId string, workDir string, cliTarget string) {
 			os.Exit(1)
 		}
 	}
-	watcher, err := NewWatcher(session, filepath.Clean(target), shareID.CanWrite())
-	if err != nil {
-		log.Fatal("Couldn't start watcher: ", err)
-	}
 
-	log.Println("Starting.")
+	// Watcher
+	watcher := &Watcher{
+		PingNewTorrent: make(chan string),
+	}
+	if shareID.CanWrite() {
+		watcher, err = NewWatcher(session, filepath.Clean(target))
+		if err != nil {
+			log.Fatal("Couldn't start watcher: ", err)
+		}
+	} else {
+		watcher.PingNewTorrent = make(chan string, 1)
+		watcher.PingNewTorrent <- session.GetCurrentInfohash()
+	}
 
 	// External listener
 	conChan, listenPort, err := listenForPeerConnections([]byte(shareID.Psk[:]))
@@ -239,6 +246,8 @@ func Share(cliId string, workDir string, cliTarget string) {
 	if *useLPD {
 		lpd.Announce(string(shareID.Infohash))
 	}
+
+	log.Println("Starting.")
 
 mainLoop:
 	for {
@@ -293,6 +302,9 @@ mainLoop:
 				currentSession.hintNewPeer(peer.address)
 			}
 		case announce := <-controlSession.Torrents:
+			if controlSession.currentIH == announce.infohash && !currentSession.IsEmpty() {
+				break
+			}
 			controlSession.SetCurrent(announce.infohash)
 
 			currentSession.Quit()
@@ -320,7 +332,13 @@ mainLoop:
 			}
 			currentSession.hintNewPeer(peer)
 		case meta := <-currentSession.NewMetaInfo():
-			watcher.saveMetainfo(meta)
+			var buf bytes.Buffer
+			err := bencode.NewEncoder(&buf).Encode(meta)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			session.SaveTorrent(buf.Bytes(), meta.InfoHash, time.Now().Format(time.RFC3339))
 		}
 	}
 }

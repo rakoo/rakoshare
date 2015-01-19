@@ -39,16 +39,14 @@ type Watcher struct {
 	PingNewTorrent chan string
 }
 
-func NewWatcher(session *sharesession.Session, watchedDir string, canWrite bool) (w *Watcher, err error) {
+func NewWatcher(session *sharesession.Session, watchedDir string) (w *Watcher, err error) {
 	w = &Watcher{
 		session:        session,
 		watchedDir:     watchedDir,
 		PingNewTorrent: make(chan string),
 	}
 
-	if canWrite {
-		go w.watch()
-	}
+	go w.watch()
 
 	// Initialization, only if there is something in the dir
 	if _, err := os.Stat(watchedDir); err != nil {
@@ -76,22 +74,55 @@ func (w *Watcher) watch() {
 
 	compareTime := w.session.GetLastModTime()
 
+	// All paths in previous scan, sorted alphabetically
+	previousScanPaths := []string{}
+
+	// All paths in current torrent, sorted alphabetically
+	torrentPaths := []string{}
+
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
+
+		currentTorrent := w.session.GetCurrentTorrent()
+		if len(currentTorrent) != 0 {
+			torrentPaths = []string{}
+			m, err := NewMetaInfoFromContent([]byte(currentTorrent))
+			if err == nil {
+				for _, f := range m.Info.Files {
+					torrentPaths = append(torrentPaths, filepath.Join(f.Path...))
+				}
+			}
+		}
+
+		scanPaths := []string{}
 
 		err := torrentWalk(w.watchedDir, func(path string, info os.FileInfo, perr error) (err error) {
 			if info.ModTime().After(compareTime) {
 				fmt.Printf("[newer] %s\n", path)
 				return errNewFile
 			}
+			scanPaths = append(scanPaths, path)
 			return
 		})
 
 		w.lock.Unlock()
 
-		previousState = currentState
+		// Check if the folder has changed:
+		// - if any number of file was added or removed
+		// - if any number of file path were changed
+		hasChanged := err == errNewFile
+		if len(scanPaths) != len(previousScanPaths) {
+			hasChanged = true
+		} else {
+			for i := range scanPaths {
+				if previousScanPaths[i] != scanPaths[i] {
+					hasChanged = true
+					break
+				}
+			}
+		}
 
-		if err == errNewFile {
+		if hasChanged {
 			currentState = CHANGED
 		} else if err == nil {
 			currentState = IDEM
@@ -116,6 +147,9 @@ func (w *Watcher) watch() {
 			}
 			w.PingNewTorrent <- ih
 		}
+
+		previousScanPaths = scanPaths
+		previousState = currentState
 	}
 }
 
@@ -129,19 +163,14 @@ func (w *Watcher) torrentify() (ih string, err error) {
 		return
 	}
 
-	err = w.saveMetainfo(meta)
-
-	return meta.InfoHash, err
-}
-
-func (w *Watcher) saveMetainfo(meta *MetaInfo) error {
 	var buf bytes.Buffer
-	err := bencode.NewEncoder(&buf).Encode(meta)
+	err = bencode.NewEncoder(&buf).Encode(meta)
 	if err != nil {
-		return err
+		return
 	}
 	w.session.SaveTorrent(buf.Bytes(), meta.InfoHash, time.Now().Format(time.RFC3339))
-	return nil
+
+	return meta.InfoHash, err
 }
 
 func createMeta(dir string) (meta *MetaInfo, err error) {
