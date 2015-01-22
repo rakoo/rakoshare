@@ -122,6 +122,15 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 	return cs, nil
 }
 
+func (cs *ControlSession) hasPeer(peer string) bool {
+	for _, p := range cs.peers {
+		if p.address == peer {
+			return true
+		}
+	}
+	return false
+}
+
 func (cs *ControlSession) Header() (header []byte) {
 	if len(cs.header) > 0 {
 		return cs.header
@@ -316,6 +325,7 @@ func (cs *ControlSession) connectToPeer(peer string) {
 		conn:     conn,
 	}
 	// log.Println("Connected to", peer)
+	cs.session.SavePeer(conn.RemoteAddr().String(), cs.hasPeer)
 	cs.AddPeer(btconn)
 }
 

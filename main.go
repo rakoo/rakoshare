@@ -252,6 +252,12 @@ func Share(cliId string, workDir string, cliTarget string, trackers []string) {
 		lpd.Announce(string(shareID.Infohash))
 	}
 
+	peers := session.GetPeers()
+	for _, p := range peers {
+		log.Printf("Feeding with known peer: %s\n", p)
+		controlSession.hintNewPeer(p)
+	}
+
 	log.Println("Starting.")
 
 mainLoop:
