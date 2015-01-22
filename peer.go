@@ -99,10 +99,9 @@ func NewPeerState(conn net.Conn) *peerState {
 		for _ = range time.Tick(10 * time.Second) {
 			ps.conn.SetReadDeadline(time.Now())
 			_, err := ps.conn.Read([]byte{})
-			neterr, ok := err.(net.Error)
-			timeout := ok && neterr.Timeout()
-			if err == io.EOF || timeout {
-				log.Printf("%s has closed remotely, closing locally", conn.RemoteAddr().String())
+			if err != nil {
+				ps.Close()
+				break
 			} else {
 				ps.conn.SetReadDeadline(time.Time{})
 			}
