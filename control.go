@@ -122,6 +122,14 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 	return cs, nil
 }
 
+func (cs *ControlSession) log(message string, others ...interface{}) {
+	log.Println("[CONTROL]", message, others)
+}
+
+func (cs *ControlSession) logf(format string, args ...interface{}) {
+	log.Printf("[CONTROL] %s", fmt.Sprintf(format, args))
+}
+
 func (cs *ControlSession) hasPeer(peer string) bool {
 	for _, p := range cs.peers {
 		if p.address == peer {
@@ -162,8 +170,8 @@ deadlockLoop:
 			lastHeartbeat = time.Now()
 		case <-time.After(15 * time.Second):
 			age := time.Now().Sub(lastHeartbeat)
-			log.Println("Starvation or deadlock of main thread detected. Look in the stack dump for what Run() is currently doing.")
-			log.Println("Last heartbeat", age.Seconds(), "seconds ago")
+			cs.log("Starvation or deadlock of main thread detected. Look in the stack dump for what Run() is currently doing.")
+			cs.log("Last heartbeat", age.Seconds(), "seconds ago")
 			panic("Killed by deadlock detector")
 		}
 	}
@@ -205,7 +213,7 @@ func (cs *ControlSession) Run() {
 				}
 			}
 		case ti := <-trackerInfoChan:
-			log.Printf("Got response from tracker: %#v\n", ti)
+			cs.logf("Got response from tracker: %#v\n", ti)
 			newPeerCount := 0
 			for _, peer := range ti.Peers {
 				if _, ok := cs.peers[peer]; !ok {
@@ -220,16 +228,16 @@ func (cs *ControlSession) Run() {
 				}
 			}
 
-			log.Println("Contacting", newPeerCount, "new peers")
+			cs.log("Contacting", newPeerCount, "new peers")
 			interval := ti.Interval
 			if interval < 120 {
 				interval = 120
 			} else if interval > 24*3600 {
 				interval = 24 * 3600
 			}
-			log.Println("..checking again in", interval, "seconds.")
+			cs.log("..checking again in", interval, "seconds.")
 			retrackerChan = time.Tick(interval * time.Second)
-			log.Println("Contacting", newPeerCount, "new peers")
+			cs.log("Contacting", newPeerCount, "new peers")
 
 		case pm := <-cs.peerMessageChan:
 			peer, message := pm.peer, pm.message
@@ -237,7 +245,7 @@ func (cs *ControlSession) Run() {
 			err2 := cs.DoMessage(peer, message)
 			if err2 != nil {
 				if err2 != io.EOF {
-					log.Println("Closing peer", peer.address, "because", err2)
+					cs.log("Closing peer", peer.address, "because", err2)
 				}
 				cs.ClosePeer(peer)
 			}
@@ -261,7 +269,7 @@ func (cs *ControlSession) Run() {
 			}
 
 		case <-cs.quit:
-			log.Println("Quitting torrent session")
+			cs.log("Quitting torrent session")
 			quitDeadlock <- struct{}{}
 			return
 		}
@@ -299,7 +307,7 @@ func (cs *ControlSession) connectToPeer(peer string) {
 	header := cs.Header()
 	_, err = conn.Write(header)
 	if err != nil {
-		log.Println("Failed to send header to", peer, err)
+		cs.log("Failed to send header to", peer, err)
 		return
 	}
 
@@ -324,7 +332,7 @@ func (cs *ControlSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	// log.Println("Connected to", peer)
+	cs.log("connectToPeer: connected to", peer)
 	cs.session.SavePeer(conn.RemoteAddr().String(), cs.hasPeer)
 	cs.AddPeer(btconn)
 }
@@ -344,7 +352,7 @@ func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
 
 	_, err := btconn.conn.Write(cs.Header())
 	if err != nil {
-		log.Printf("Error writing header: %s\n", err)
+		cs.logf("Error writing header: %s\n", err)
 		btconn.conn.Close()
 		return
 	}
@@ -399,7 +407,7 @@ func (cs *ControlSession) DoMessage(p *peerState, message []byte) (err error) {
 	}
 
 	if message[0] != EXTENSION {
-		log.Printf("Wrong message type: %d\n", message[0])
+		cs.logf("Wrong message type: %d\n", message[0])
 		return errInvalidType
 	}
 	switch message[1] {
@@ -416,7 +424,7 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 	var h ExtensionHandshake
 	err = bencode.NewDecoder(bytes.NewReader(msg[1:])).Decode(&h)
 	if err != nil {
-		log.Println("Error when unmarshaling extension handshake")
+		cs.log("Error when unmarshaling extension handshake")
 		return err
 	}
 
@@ -435,7 +443,7 @@ func (cs *ControlSession) DoHandshake(msg []byte, p *peerState) (err error) {
 	if len(currentFromSession) > 0 {
 		err = bencode.NewDecoder(strings.NewReader(currentFromSession)).Decode(&currentIHMessage)
 		if err != nil {
-			log.Println("Error deserializing current ih message to be resent", err)
+			cs.log("Error deserializing current ih message to be resent", err)
 		} else {
 			p.sendExtensionMessage("bs_metadata", currentIHMessage)
 		}
@@ -489,7 +497,7 @@ func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, er
 	var buf bytes.Buffer
 	err = bencode.NewEncoder(&buf).Encode(info)
 	if err != nil {
-		log.Printf("[CONTROL] Couldn't encode ih message, returning now")
+		log.Println("[CONTROL] Couldn't encode ih message, returning now")
 		return mm, err
 	}
 
@@ -509,7 +517,7 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	var message IHMessage
 	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&message)
 	if err != nil {
-		log.Println("Couldn't decode metadata message: ", err)
+		cs.log("Couldn't decode metadata message: ", err)
 		return
 	}
 	if message.Info.InfoHash == "" || message.Port == 0 {
@@ -532,7 +540,7 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	var tmpInfoBuf bytes.Buffer
 	err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
 	if err != nil {
-		log.Printf("[CONTROL] Couldn't encode ih message, returning now")
+		cs.log("Couldn't encode ih message, returning now")
 		return err
 	}
 
@@ -541,7 +549,6 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	copy(sig[:], []byte(message.Sig))
 	ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), sig)
 	if !ok {
-		log.Printf("[CONTROL] Bad signature")
 		return errors.New("Bad Signature")
 	}
 

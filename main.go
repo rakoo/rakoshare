@@ -273,8 +273,10 @@ mainLoop:
 			break mainLoop
 		case c := <-conChan:
 			if currentSession.Matches(c.infohash) {
+				log.Println("[MAIN] New conn for current:", c.conn.RemoteAddr().String())
 				currentSession.AcceptNewPeer(c)
 			} else if controlSession.Matches(c.infohash) {
+				log.Println("[MAIN] New conn for control:", c.conn.RemoteAddr().String())
 				controlSession.AcceptNewPeer(c)
 			}
 		case announce := <-lpd.announces:
@@ -320,6 +322,7 @@ mainLoop:
 
 			currentSession.Quit()
 
+			log.Println("Opening new torrent session")
 			magnet := fmt.Sprintf("magnet:?xt=urn:btih:%x", announce.infohash)
 			tentativeSession, err := NewTorrentSession(shareID, target, magnet, listenPort)
 			if err != nil {

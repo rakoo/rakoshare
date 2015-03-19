@@ -62,7 +62,6 @@ func listenForPeerConnections(key []byte) (conChan chan *btConn, listenPort int,
 					conn.Close()
 					return
 				}
-				log.Printf("New peer: %s\n", conn.RemoteAddr())
 				peersInfoHash := string(header[8:28])
 				id := string(header[28:48])
 				conChan <- &btConn{

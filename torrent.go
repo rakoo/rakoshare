@@ -335,7 +335,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	// log.Println("Adding peer", peer)
+	log.Println("Adding peer", peer)
 	if len(t.peers) >= MAX_NUM_PEERS {
 		log.Println("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
