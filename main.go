@@ -311,9 +311,12 @@ mainLoop:
 			}
 			currentSession = tentativeSession
 			go currentSession.DoTorrent()
-			for _, peer := range controlSession.peers {
+
+			controlSession.p.Lock()
+			for _, peer := range controlSession.p.peers {
 				currentSession.hintNewPeer(peer.address)
 			}
+			controlSession.p.Unlock()
 		case announce := <-controlSession.Torrents:
 			if controlSession.currentIH == announce.infohash && !currentSession.IsEmpty() {
 				break

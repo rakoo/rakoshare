@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rakoo/rakoshare/pkg/id"
@@ -31,6 +32,11 @@ var (
 )
 
 var useDHT = flag.Bool("useDHT", true, "Use DHT to get peers")
+
+type lockedPeers struct {
+	sync.Mutex
+	peers map[string]*peerState
+}
 
 type ControlSession struct {
 	ID     id.Id
@@ -54,7 +60,7 @@ type ControlSession struct {
 	header          []byte
 	quit            chan struct{}
 	dht             *dht.DHT
-	peers           map[string]*peerState
+	p               lockedPeers
 	peerMessageChan chan peerMessage
 
 	trackers []string
@@ -105,7 +111,7 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 			1: "ut_pex",
 			2: "bs_metadata",
 		},
-		peers: make(map[string]*peerState),
+		p: lockedPeers{peers: make(map[string]*peerState)},
 
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
@@ -131,7 +137,10 @@ func (cs *ControlSession) logf(format string, args ...interface{}) {
 }
 
 func (cs *ControlSession) hasPeer(peer string) bool {
-	for _, p := range cs.peers {
+	cs.p.Lock()
+	defer cs.p.Unlock()
+
+	for _, p := range cs.p.peers {
 		if p.address == peer {
 			return true
 		}
@@ -206,9 +215,8 @@ func (cs *ControlSession) Run() {
 			for _, peers := range dhtInfoHashPeers {
 				for _, peer := range peers {
 					peer = dht.DecodePeerAddress(peer)
-					if _, ok := cs.peers[peer]; !ok {
+					if cs.hintNewPeer(peer) {
 						newPeerCount++
-						go cs.connectToPeer(peer)
 					}
 				}
 			}
@@ -216,15 +224,13 @@ func (cs *ControlSession) Run() {
 			cs.logf("Got response from tracker: %#v\n", ti)
 			newPeerCount := 0
 			for _, peer := range ti.Peers {
-				if _, ok := cs.peers[peer]; !ok {
+				if cs.hintNewPeer(peer) {
 					newPeerCount++
-					go cs.connectToPeer(peer)
 				}
 			}
 			for _, peer6 := range ti.Peers6 {
-				if _, ok := cs.peers[peer6]; !ok {
+				if cs.hintNewPeer(peer6) {
 					newPeerCount++
-					go cs.connectToPeer(peer6)
 				}
 			}
 
@@ -252,11 +258,15 @@ func (cs *ControlSession) Run() {
 		case <-rechokeChan:
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
-			if len(cs.peers) < TARGET_NUM_PEERS {
+			cs.p.Lock()
+			if len(cs.p.peers) < TARGET_NUM_PEERS {
 				go cs.dht.PeersRequest(string(cs.ID.Infohash), true)
 			}
+			cs.p.Unlock()
 		case <-verboseChan:
-			log.Println("[CONTROL] Peers:", len(cs.peers))
+			cs.p.Lock()
+			cs.log("Peers:", len(cs.p.peers))
+			cs.p.Unlock()
 		case <-keepAliveChan:
 			now := time.Now()
 			for _, peer := range cs.peers {
@@ -279,7 +289,9 @@ func (cs *ControlSession) Run() {
 
 func (cs *ControlSession) Quit() error {
 	cs.quit <- struct{}{}
-	for _, peer := range cs.peers {
+	cs.p.Lock()
+	defer cs.p.Unlock()
+	for _, peer := range cs.p.peers {
 		cs.ClosePeer(peer)
 	}
 	if cs.dht != nil {
@@ -337,10 +349,15 @@ func (cs *ControlSession) connectToPeer(peer string) {
 	cs.AddPeer(btconn)
 }
 
-func (cs *ControlSession) hintNewPeer(peer string) {
-	if _, ok := cs.peers[peer]; !ok {
+func (cs *ControlSession) hintNewPeer(peer string) (isnew bool) {
+	cs.p.Lock()
+	defer cs.p.Unlock()
+	if _, ok := cs.p.peers[peer]; !ok {
 		go cs.connectToPeer(peer)
+		return true
 	}
+
+	return false
 }
 
 func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
@@ -369,8 +386,8 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	if len(cs.peers) >= MAX_NUM_PEERS {
-		log.Println("We have enough peers. Rejecting additional peer", peer)
+	if len(cs.p.peers) >= MAX_NUM_PEERS {
+		cs.log("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
 		return
 	}
@@ -384,7 +401,7 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 		go cs.dht.AddNode(ps.address)
 	}
 
-	cs.peers[peer] = ps
+	cs.p.peers[peer] = ps
 	go ps.peerWriter(cs.peerMessageChan)
 	go ps.peerReader(cs.peerMessageChan)
 
@@ -395,8 +412,10 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 }
 
 func (cs *ControlSession) ClosePeer(peer *peerState) {
+	cs.p.Lock()
+	defer cs.p.Unlock()
 	peer.Close()
-	delete(cs.peers, peer.address)
+	delete(cs.p.peers, peer.address)
 }
 
 func (cs *ControlSession) DoMessage(p *peerState, message []byte) (err error) {
@@ -635,7 +654,10 @@ func (cs *ControlSession) UpdateIHMessage(newih string) {
 }
 
 func (cs *ControlSession) broadcast(message IHMessage) {
-	for _, ps := range cs.peers {
+	cs.p.Lock()
+	defer cs.p.Unlock()
+
+	for _, ps := range cs.p.peers {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}
