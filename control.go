@@ -564,10 +564,6 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	port := strconv.Itoa(int(message.Port))
 	peer := ip + ":" + port
 
-	if cs.currentIH == message.Info.InfoHash {
-		return
-	}
-
 	var tmpInfoBuf bytes.Buffer
 	err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
 	if err != nil {
@@ -588,10 +584,6 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 		infohash: message.Info.InfoHash,
 		peer:     peer,
 	}
-
-	cs.currentIH = message.Info.InfoHash
-
-	cs.broadcast(message)
 
 	go func() {
 		cs.NewPeers <- peer
