@@ -269,14 +269,29 @@ func (cs *ControlSession) Run() {
 			cs.p.Unlock()
 		case <-keepAliveChan:
 			now := time.Now()
-			for _, peer := range cs.peers {
+			cs.p.Lock()
+
+			seen := make(map[string]struct{})
+
+			for _, peer := range cs.p.peers {
+
+				// If we have duplicate, remove them
+				if _, ok := seen[peer.id]; ok {
+					cs.logf("Closing duplicate: %s at %s\n", peer.id, peer.conn.RemoteAddr())
+					cs.ClosePeer(peer)
+					continue
+				}
+				seen[peer.id] = struct{}{}
+
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 3*time.Minute {
 					// log.Println("Closing peer", peer.address, "because timed out.")
 					cs.ClosePeer(peer)
 					continue
 				}
 				peer.keepAlive(now)
+
 			}
+			cs.p.Unlock()
 
 		case <-cs.quit:
 			cs.log("Quitting torrent session")
@@ -377,11 +392,8 @@ func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
 }
 
 func (cs *ControlSession) AddPeer(btconn *btConn) {
-	for _, p := range cs.peers {
-		if p.id == btconn.id {
-			return
-		}
-	}
+	cs.p.Lock()
+	defer cs.p.Unlock()
 
 	theirheader := btconn.header
 
