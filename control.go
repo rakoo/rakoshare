@@ -602,9 +602,18 @@ func (cs *ControlSession) Matches(ih string) bool {
 func (cs *ControlSession) SetCurrent(ih string) {
 	cs.currentIH = ih
 
+	var message IHMessage
+	bencode.DecodeString(cs.session.GetCurrentIHMessage(), &message)
+
+	cs.broadcast(message)
+}
+
+// UpdateIHMessage updates the infohash message we broadcast to
+// everyone. This method must be called only if we can write.
+func (cs *ControlSession) UpdateIHMessage(newih string) {
 	parts := strings.Split(cs.rev, "-")
 	if len(parts) != 2 {
-		log.Printf("Invalid rev: %s\n", cs.rev)
+		cs.logf("Invalid rev: %s\n", cs.rev)
 		parts = []string{"0", ""}
 	}
 
@@ -614,7 +623,7 @@ func (cs *ControlSession) SetCurrent(ih string) {
 	}
 	newCounter := strconv.Itoa(counter + 1)
 
-	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(ih+parts[1])))
+	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(newih+parts[1])))
 
 	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
 	if err != nil {
@@ -623,8 +632,6 @@ func (cs *ControlSession) SetCurrent(ih string) {
 	var buf bytes.Buffer
 	err = bencode.NewEncoder(&buf).Encode(mess)
 	cs.session.SaveIHMessage(buf.Bytes())
-
-	cs.broadcast(mess)
 }
 
 func (cs *ControlSession) broadcast(message IHMessage) {

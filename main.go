@@ -292,7 +292,7 @@ mainLoop:
 			if ih == controlSession.currentIH && !currentSession.IsEmpty() {
 				break
 			}
-
+			controlSession.UpdateIHMessage(ih)
 			controlSession.SetCurrent(ih)
 
 			currentSession.Quit()
