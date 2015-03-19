@@ -391,6 +391,7 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(cs.ourExtensions, 0)
 	}
+	cs.logf("AddPeer: added %s\n", btconn.conn.RemoteAddr().String())
 }
 
 func (cs *ControlSession) ClosePeer(peer *peerState) {
@@ -501,10 +502,9 @@ func NewIHMessage(port int64, ih, rev string, priv id.PrivKey) (mm IHMessage, er
 		return mm, err
 	}
 
-	privarg := new([ed.PrivateKeySize]byte)
+	var privarg [ed.PrivateKeySize]byte
 	copy(privarg[:], priv[:])
-
-	sig := ed.Sign(privarg, buf.Bytes())
+	sig := ed.Sign(&privarg, buf.Bytes())
 
 	return IHMessage{
 		Info: info,
@@ -545,9 +545,9 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	}
 
 	pub := [ed.PublicKeySize]byte(cs.ID.Pub)
-	sig := new([ed.SignatureSize]byte)
-	copy(sig[:], []byte(message.Sig))
-	ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), sig)
+	var sig [ed.SignatureSize]byte
+	copy(sig[0:ed.SignatureSize], message.Sig)
+	ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), &sig)
 	if !ok {
 		return errors.New("Bad Signature")
 	}

@@ -374,7 +374,7 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 		t.si.ME.Transferring = false
 	}
 
-	_ = t.removeRequests(peer)
+	t.removeRequests(peer)
 	peer.Close()
 	delete(t.peers, peer.address)
 }
