@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -35,7 +36,8 @@ var useDHT = flag.Bool("useDHT", true, "Use DHT to get peers")
 
 type lockedPeers struct {
 	sync.Mutex
-	peers map[string]*peerState
+	peers             map[string]*peerState
+	disconnectedPeers map[string]*peerState
 }
 
 type ControlSession struct {
@@ -426,8 +428,26 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 func (cs *ControlSession) ClosePeer(peer *peerState) {
 	cs.p.Lock()
 	defer cs.p.Unlock()
+
 	peer.Close()
 	delete(cs.p.peers, peer.address)
+
+	go func() {
+		for backoff := 1; backoff < 5; backoff++ {
+			cs.hintNewPeer(peer.address)
+			cs.p.Lock()
+			for peerAddr := range cs.p.peers {
+				if peerAddr == peer.address {
+					break
+				}
+			}
+			cs.p.Unlock()
+
+			wait := 10 * int(math.Pow(float64(2), float64(backoff)))
+			cs.logf("backoff for %s: %d\n", peer.address, wait)
+			<-time.After(time.Duration(wait) * time.Second)
+		}
+	}()
 }
 
 func (cs *ControlSession) DoMessage(p *peerState, message []byte) (err error) {
