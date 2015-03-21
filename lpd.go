@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -12,7 +11,6 @@ import (
 	"time"
 )
 
-var useLPD = flag.Bool("useLPD", true, "Use Local Peer Discovery")
 var (
 	request_template = "BT-SEARCH * HTTP/1.1\r\n" +
 		"Host: 239.192.152.143:6771\r\n" +

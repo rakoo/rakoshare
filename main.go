@@ -104,6 +104,15 @@ func main() {
 					Value: &cli.StringSlice{},
 					Usage: "A tracker to connect to",
 				},
+				cli.BoolTFlag{
+					Name:  "useLPD",
+					Usage: "Use Local Peer Discovery",
+				},
+				cli.StringSliceFlag{
+					Name:  "peer",
+					Value: &cli.StringSlice{},
+					Usage: "A peer to connect to",
+				},
 			},
 			Action: func(c *cli.Context) {
 				if c.String("id") == "" {
@@ -111,7 +120,8 @@ func main() {
 					return
 				}
 				Share(c.String("id"), workDir, c.String("dir"),
-					c.StringSlice("tracker"))
+					c.StringSlice("tracker"), c.Bool("useLPD"),
+					c.StringSlice("peer"))
 			},
 		},
 		{
@@ -173,7 +183,7 @@ func List(workDir string) []share {
 	return shares
 }
 
-func Share(cliId string, workDir string, cliTarget string, trackers []string) {
+func Share(cliId string, workDir string, cliTarget string, trackers []string, useLPD bool, manualPeers []string) {
 	shareID, err := id.NewFromString(cliId)
 	if err != nil {
 		fmt.Printf("Couldn't generate shareId: %s\n", err)
@@ -236,7 +246,7 @@ func Share(cliId string, workDir string, cliTarget string, trackers []string) {
 
 	// LPD
 	lpd := &Announcer{announces: make(chan *Announce)}
-	if *useLPD {
+	if useLPD {
 		lpd, err = NewAnnouncer(listenPort)
 		if err != nil {
 			log.Fatal("Couldn't listen for Local Peer Discoveries: ", err)
@@ -248,8 +258,11 @@ func Share(cliId string, workDir string, cliTarget string, trackers []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if *useLPD {
+	if useLPD {
 		lpd.Announce(string(shareID.Infohash))
+	}
+	for _, peer := range manualPeers {
+		controlSession.hintNewPeer(peer)
 	}
 
 	peers := session.GetPeers()
