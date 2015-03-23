@@ -40,6 +40,23 @@ type lockedPeers struct {
 	disconnectedPeers map[string]*peerState
 }
 
+func (lp lockedPeers) know(peer string) bool {
+	lp.Lock()
+	defer lp.Unlock()
+
+	for p := range lp.peers {
+		host, _, err := net.SplitHostPort(p)
+		if err != nil {
+			return false
+		}
+		if host == peer {
+			return true
+		}
+	}
+
+	return false
+}
+
 type ControlSession struct {
 	ID     id.Id
 	Port   int
@@ -365,21 +382,45 @@ func (cs *ControlSession) connectToPeer(peer string) {
 	cs.AddPeer(btconn)
 }
 
+func (cs *ControlSession) backoffHintNewPeer(peer string) {
+	cs.log("backoffHintNewPeer: hinting", peer)
+	go func() {
+		for backoff := 1; backoff < 5; backoff++ {
+			cs.hintNewPeer(peer)
+			if cs.p.know(peer) {
+				return
+			}
+
+			wait := 10 * int(math.Pow(float64(2), float64(backoff)))
+			cs.logf("backoff for %s: %d\n", peer, wait)
+			<-time.After(time.Duration(wait) * time.Second)
+		}
+		return
+	}()
+}
+
 func (cs *ControlSession) hintNewPeer(peer string) (isnew bool) {
-	cs.p.Lock()
-	defer cs.p.Unlock()
-	if _, ok := cs.p.peers[peer]; !ok {
-		go cs.connectToPeer(peer)
+	newHost, _, err := net.SplitHostPort(peer)
+	if err != nil {
+		return false
+	}
+
+	if cs.p.know(newHost) {
 		return true
 	}
 
-	return false
+	go cs.connectToPeer(peer)
+	return true
 }
 
 func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
 	// If it's us, we don't need to continue
 	if btconn.id == cs.PeerID {
 		btconn.conn.Close()
+		return
+	}
+
+	if cs.p.know(btconn.conn.RemoteAddr().String()) {
 		return
 	}
 
@@ -431,22 +472,7 @@ func (cs *ControlSession) ClosePeer(peer *peerState) {
 	peer.Close()
 	delete(cs.p.peers, peer.address)
 
-	go func() {
-		for backoff := 1; backoff < 5; backoff++ {
-			cs.hintNewPeer(peer.address)
-			cs.p.Lock()
-			for peerAddr := range cs.p.peers {
-				if peerAddr == peer.address {
-					break
-				}
-			}
-			cs.p.Unlock()
-
-			wait := 10 * int(math.Pow(float64(2), float64(backoff)))
-			cs.logf("backoff for %s: %d\n", peer.address, wait)
-			<-time.After(time.Duration(wait) * time.Second)
-		}
-	}()
+	cs.backoffHintNewPeer(peer.address)
 }
 
 func (cs *ControlSession) DoMessage(p *peerState, message []byte) (err error) {

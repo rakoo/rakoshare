@@ -262,13 +262,13 @@ func Share(cliId string, workDir string, cliTarget string, trackers []string, us
 		lpd.Announce(string(shareID.Infohash))
 	}
 	for _, peer := range manualPeers {
-		controlSession.hintNewPeer(peer)
+		controlSession.backoffHintNewPeer(peer)
 	}
 
 	peers := session.GetPeers()
 	for _, p := range peers {
 		log.Printf("Feeding with known peer: %s\n", p)
-		controlSession.hintNewPeer(p)
+		controlSession.backoffHintNewPeer(p)
 	}
 
 	log.Println("Starting.")
@@ -299,14 +299,16 @@ mainLoop:
 				break
 			}
 			if controlSession.Matches(string(hexhash)) {
-				controlSession.hintNewPeer(announce.peer)
+				controlSession.backoffHintNewPeer(announce.peer)
 			}
 		case ih := <-watcher.PingNewTorrent:
 			if ih == controlSession.currentIH && !currentSession.IsEmpty() {
 				break
 			}
-			controlSession.UpdateIHMessage(ih)
-			controlSession.SetCurrent(ih)
+			err := controlSession.SetCurrent(ih)
+			if err != nil {
+				log.Fatal("Error setting new current infohash:", err)
+			}
 
 			currentSession.Quit()
 
@@ -334,7 +336,10 @@ mainLoop:
 			if controlSession.currentIH == announce.infohash && !currentSession.IsEmpty() {
 				break
 			}
-			controlSession.SetCurrent(announce.infohash)
+			err := controlSession.SetCurrent(announce.infohash)
+			if err != nil {
+				log.Fatal("Error setting new current infohash:", err)
+			}
 
 			currentSession.Quit()
 
