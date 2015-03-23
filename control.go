@@ -135,7 +135,7 @@ func (cs *ControlSession) log(message string, others ...interface{}) {
 }
 
 func (cs *ControlSession) logf(format string, args ...interface{}) {
-	log.Printf("[CONTROL] %s", fmt.Sprintf(format, args))
+	log.Println("[CONTROL]", fmt.Sprintf(format, args))
 }
 
 func (cs *ControlSession) hasPeer(peer string) bool {
@@ -361,7 +361,6 @@ func (cs *ControlSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	cs.log("connectToPeer: connected to", peer)
 	cs.session.SavePeer(conn.RemoteAddr().String(), cs.hasPeer)
 	cs.AddPeer(btconn)
 }
@@ -600,6 +599,7 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	}
 
 	cs.session.SaveIHMessage(tmpInfoBuf.Bytes())
+	cs.log("DoMetadata: sending announce")
 	cs.Torrents <- Announce{
 		infohash: message.Info.InfoHash,
 		peer:     peer,
@@ -608,6 +608,7 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	go func() {
 		cs.NewPeers <- peer
 	}()
+	cs.log("DoMetadata: sent announce")
 
 	return
 }
@@ -667,6 +668,7 @@ func (cs *ControlSession) UpdateIHMessage(newih string) {
 	newCounter := strconv.Itoa(counter + 1)
 
 	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(newih+parts[1])))
+	cs.logf("Updating rev with ih %x", ih)
 
 	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
 	if err != nil {
