@@ -92,7 +92,7 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 
 	rev := "0-"
 	if currentIhMessage.Info.Rev != "" {
-		parts := strings.Split(currentIhMessage.Info.Rev, "2")
+		parts := strings.Split(currentIhMessage.Info.Rev, "-")
 		if len(parts) == 2 {
 			if _, err := strconv.Atoi(parts[0]); err == nil {
 				rev = currentIhMessage.Info.Rev
