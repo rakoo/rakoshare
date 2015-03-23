@@ -294,7 +294,7 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 
 	theirheader, err := readHeader(conn)
 	if err != nil {
-		// log.Printf("Failed to read header from %s: %s", peer, err)
+		log.Printf("Failed to read header from %s: %s", peer, err)
 		return
 	}
 
@@ -313,7 +313,6 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	// log.Println("Connected to", peer)
 	ts.AddPeer(btconn)
 }
 
@@ -326,16 +325,10 @@ func (t *TorrentSession) AcceptNewPeer(btconn *btConn) {
 }
 
 func (t *TorrentSession) AddPeer(btconn *btConn) {
-	for _, p := range t.peers {
-		if p.id == btconn.id {
-			return
-		}
-	}
-
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	log.Println("Adding peer", peer)
+	log.Println("[TORRENT] AddPeer: Adding peer", peer)
 	if len(t.peers) >= MAX_NUM_PEERS {
 		log.Println("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
@@ -413,15 +406,11 @@ func (t *TorrentSession) DoTorrent() {
 
 	log.Println("[CURRENT] Start")
 
-	rechokeChan := time.Tick(1 * time.Second)
+	rechokeChan := time.Tick(10 * time.Second)
 	verboseChan := time.Tick(10 * time.Minute)
 	keepAliveChan := time.Tick(60 * time.Second)
 
 	for {
-		peers := make([]string, len(t.peers))
-		for p := range t.peers {
-			peers = append(peers, p)
-		}
 		select {
 		case pm := <-t.peerMessageChan:
 			peer, message := pm.peer, pm.message
@@ -447,6 +436,16 @@ func (t *TorrentSession) DoTorrent() {
 				len(t.peers), t.goodPieces, t.totalPieces, ratio)
 		case <-keepAliveChan:
 			now := time.Now()
+			count := make(map[*peerState]int)
+			for _, peer := range t.peers {
+				count[peer]++
+			}
+			for peer, counted := range count {
+				if counted > 1 {
+					t.ClosePeer(peer)
+				}
+			}
+
 			for _, peer := range t.peers {
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 3*time.Minute {
 					// log.Println("Closing peer", peer.address, "because timed out.")
