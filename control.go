@@ -570,11 +570,7 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 		cs.log("Couldn't decode metadata message: ", err)
 		return
 	}
-	if message.Info.InfoHash == "" || message.Port == 0 {
-		return
-	}
-
-	if cs.isNewerThan(message.Info.Rev) {
+	if message.Port == 0 {
 		return
 	}
 
@@ -582,6 +578,14 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	ip := p.conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	port := strconv.Itoa(int(message.Port))
 	peer := ip + ":" + port
+
+	go func() {
+		cs.NewPeers <- peer
+	}()
+
+	if cs.isNewerThan(message.Info.Rev) {
+		return
+	}
 
 	var tmpInfoBuf bytes.Buffer
 	err = bencode.NewEncoder(&tmpInfoBuf).Encode(message.Info)
@@ -604,10 +608,6 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 		infohash: message.Info.InfoHash,
 		peer:     peer,
 	}
-
-	go func() {
-		cs.NewPeers <- peer
-	}()
 	cs.log("DoMetadata: sent announce")
 
 	return
@@ -632,7 +632,7 @@ func (cs *ControlSession) isNewerThan(rev string) bool {
 		return true
 	}
 
-	return localCounter > remoteCounter
+	return localCounter >= remoteCounter
 }
 
 func (cs *ControlSession) DoPex(msg []byte, p *peerState) (err error) {
@@ -643,18 +643,11 @@ func (cs *ControlSession) Matches(ih string) bool {
 	return string(cs.ID.Infohash) == ih
 }
 
-func (cs *ControlSession) SetCurrent(ih string) {
-	cs.currentIH = ih
+func (cs *ControlSession) SetCurrent(ih string) error {
+	if cs.currentIH == ih {
+		return nil
+	}
 
-	var message IHMessage
-	bencode.DecodeString(cs.session.GetCurrentIHMessage(), &message)
-
-	cs.broadcast(message)
-}
-
-// UpdateIHMessage updates the infohash message we broadcast to
-// everyone. This method must be called only if we can write.
-func (cs *ControlSession) UpdateIHMessage(newih string) {
 	parts := strings.Split(cs.rev, "-")
 	if len(parts) != 2 {
 		cs.logf("Invalid rev: %s\n", cs.rev)
@@ -667,16 +660,28 @@ func (cs *ControlSession) UpdateIHMessage(newih string) {
 	}
 	newCounter := strconv.Itoa(counter + 1)
 
-	cs.rev = newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(newih+parts[1])))
 	cs.logf("Updating rev with ih %x", ih)
+	newRev := newCounter + "-" + fmt.Sprintf("%x", sha1.Sum([]byte(ih+parts[1])))
 
-	mess, err := NewIHMessage(int64(cs.Port), cs.currentIH, cs.rev, cs.ID.Priv)
+	mess, err := NewIHMessage(int64(cs.Port), ih, newRev, cs.ID.Priv)
 	if err != nil {
-		return
+		return err
 	}
 	var buf bytes.Buffer
 	err = bencode.NewEncoder(&buf).Encode(mess)
-	cs.session.SaveIHMessage(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	err = cs.session.SaveIHMessage(buf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	cs.currentIH = ih
+	cs.rev = newRev
+
+	cs.broadcast(mess)
+	return nil
 }
 
 func (cs *ControlSession) broadcast(message IHMessage) {
