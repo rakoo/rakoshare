@@ -36,16 +36,19 @@ var useDHT = flag.Bool("useDHT", true, "Use DHT to get peers")
 
 type lockedPeers struct {
 	sync.Mutex
-	peers             map[string]*peerState
-	disconnectedPeers map[string]*peerState
+	peers []*peerState
 }
 
-func (lp lockedPeers) know(peer string) bool {
+func newLockedPeers() *lockedPeers {
+	return &lockedPeers{peers: make([]*peerState, 0)}
+}
+
+func (lp *lockedPeers) know(peer string) bool {
 	lp.Lock()
 	defer lp.Unlock()
 
-	for p := range lp.peers {
-		host, _, err := net.SplitHostPort(p)
+	for _, p := range lp.peers {
+		host, _, err := net.SplitHostPort(p.address)
 		if err != nil {
 			return false
 		}
@@ -54,6 +57,56 @@ func (lp lockedPeers) know(peer string) bool {
 		}
 	}
 
+	return false
+}
+
+func (lp *lockedPeers) Peers() []*peerState {
+	lp.Lock()
+	defer lp.Unlock()
+
+	ret := make([]*peerState, len(lp.peers))
+	for i, p := range lp.peers {
+		ret[i] = p
+	}
+	return ret
+}
+
+func (lp *lockedPeers) Len() (l int) {
+	lp.Lock()
+	l = len(lp.peers)
+	lp.Unlock()
+	return l
+}
+
+func (lp *lockedPeers) Add(peer *peerState) {
+	lp.Lock()
+	lp.peers = append(lp.peers, peer)
+	lp.Unlock()
+}
+
+func (lp *lockedPeers) Delete(peer *peerState) {
+	lp.Lock()
+	defer lp.Unlock()
+
+	for i, p := range lp.peers {
+		if p.address == peer.address {
+			// We don't care about the order, just put the last one here
+			lp.peers[i] = lp.peers[len(lp.peers)-1]
+			lp.peers = lp.peers[:len(lp.peers)-1]
+			return
+		}
+	}
+}
+
+func (lp *lockedPeers) HasPeer(peer string) bool {
+	lp.Lock()
+	defer lp.Unlock()
+
+	for _, p := range lp.peers {
+		if p.address == peer {
+			return true
+		}
+	}
 	return false
 }
 
@@ -79,7 +132,7 @@ type ControlSession struct {
 	header          []byte
 	quit            chan struct{}
 	dht             *dht.DHT
-	p               lockedPeers
+	p               *lockedPeers
 	peerMessageChan chan peerMessage
 
 	trackers []string
@@ -130,7 +183,7 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 			1: "ut_pex",
 			2: "bs_metadata",
 		},
-		p: lockedPeers{peers: make(map[string]*peerState)},
+		p: newLockedPeers(),
 
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
@@ -153,18 +206,6 @@ func (cs *ControlSession) log(message string, others ...interface{}) {
 
 func (cs *ControlSession) logf(format string, args ...interface{}) {
 	log.Println("[CONTROL]", fmt.Sprintf(format, args))
-}
-
-func (cs *ControlSession) hasPeer(peer string) bool {
-	cs.p.Lock()
-	defer cs.p.Unlock()
-
-	for _, p := range cs.p.peers {
-		if p.address == peer {
-			return true
-		}
-	}
-	return false
 }
 
 func (cs *ControlSession) Header() (header []byte) {
@@ -277,40 +318,36 @@ func (cs *ControlSession) Run() {
 		case <-rechokeChan:
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
-			cs.p.Lock()
-			if len(cs.p.peers) < TARGET_NUM_PEERS {
+			if cs.p.Len() < TARGET_NUM_PEERS {
 				go cs.dht.PeersRequest(string(cs.ID.Infohash), true)
 			}
-			cs.p.Unlock()
 		case <-verboseChan:
-			cs.p.Lock()
-			cs.log("Peers:", len(cs.p.peers))
-			cs.p.Unlock()
+			cs.log("Peers:", cs.p.Len())
 		case <-keepAliveChan:
 			now := time.Now()
-			cs.p.Lock()
 
 			seen := make(map[string]struct{})
 
-			for _, peer := range cs.p.peers {
+			for _, peer := range cs.p.Peers() {
 
+				host, _, err := net.SplitHostPort(peer.address)
+				if err != nil {
+					continue
+				}
 				// If we have duplicate, remove them
-				if _, ok := seen[peer.id]; ok {
-					cs.logf("Closing duplicate: %s at %s\n", peer.id, peer.conn.RemoteAddr())
+				if _, ok := seen[host]; ok {
 					cs.ClosePeer(peer)
 					continue
 				}
-				seen[peer.id] = struct{}{}
+				seen[host] = struct{}{}
 
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 3*time.Minute {
 					// log.Println("Closing peer", peer.address, "because timed out.")
 					cs.ClosePeer(peer)
 					continue
 				}
-				peer.keepAlive(now)
-
+				go peer.keepAlive(now)
 			}
-			cs.p.Unlock()
 
 		case <-cs.quit:
 			cs.log("Quitting torrent session")
@@ -323,9 +360,7 @@ func (cs *ControlSession) Run() {
 
 func (cs *ControlSession) Quit() error {
 	cs.quit <- struct{}{}
-	cs.p.Lock()
-	defer cs.p.Unlock()
-	for _, peer := range cs.p.peers {
+	for _, peer := range cs.p.Peers() {
 		cs.ClosePeer(peer)
 	}
 	if cs.dht != nil {
@@ -378,12 +413,11 @@ func (cs *ControlSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	cs.session.SavePeer(conn.RemoteAddr().String(), cs.hasPeer)
+	cs.session.SavePeer(conn.RemoteAddr().String(), cs.p.HasPeer)
 	cs.AddPeer(btconn)
 }
 
 func (cs *ControlSession) backoffHintNewPeer(peer string) {
-	cs.log("backoffHintNewPeer: hinting", peer)
 	go func() {
 		for backoff := 1; backoff < 5; backoff++ {
 			cs.hintNewPeer(peer)
@@ -392,7 +426,7 @@ func (cs *ControlSession) backoffHintNewPeer(peer string) {
 			}
 
 			wait := 10 * int(math.Pow(float64(2), float64(backoff)))
-			cs.logf("backoff for %s: %d\n", peer, wait)
+			// cs.logf("backoff for %s: %d", peer, wait)
 			<-time.After(time.Duration(wait) * time.Second)
 		}
 		return
@@ -434,13 +468,10 @@ func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
 }
 
 func (cs *ControlSession) AddPeer(btconn *btConn) {
-	cs.p.Lock()
-	defer cs.p.Unlock()
-
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	if len(cs.p.peers) >= MAX_NUM_PEERS {
+	if cs.p.Len() >= MAX_NUM_PEERS {
 		cs.log("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
 		return
@@ -455,23 +486,19 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 		go cs.dht.AddNode(ps.address)
 	}
 
-	cs.p.peers[peer] = ps
+	cs.p.Add(ps)
 	go ps.peerWriter(cs.peerMessageChan)
 	go ps.peerReader(cs.peerMessageChan)
 
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(cs.ourExtensions, 0)
 	}
-	cs.logf("AddPeer: added %s\n", btconn.conn.RemoteAddr().String())
+	cs.logf("AddPeer: added %s", btconn.conn.RemoteAddr().String())
 }
 
 func (cs *ControlSession) ClosePeer(peer *peerState) {
-	cs.p.Lock()
-	defer cs.p.Unlock()
-
+	cs.p.Delete(peer)
 	peer.Close()
-	delete(cs.p.peers, peer.address)
-
 	cs.backoffHintNewPeer(peer.address)
 }
 
@@ -711,10 +738,7 @@ func (cs *ControlSession) SetCurrent(ih string) error {
 }
 
 func (cs *ControlSession) broadcast(message IHMessage) {
-	cs.p.Lock()
-	defer cs.p.Unlock()
-
-	for _, ps := range cs.p.peers {
+	for _, ps := range cs.p.Peers() {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}
