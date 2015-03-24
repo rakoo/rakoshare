@@ -14,7 +14,7 @@ type BufferedSpipeConn struct {
 }
 
 func newBufferedSpipeConn(conn net.Conn) BufferedSpipeConn {
-	bsc := BufferedSpipeConn{conn, make(chan []byte), make(chan struct{})}
+	bsc := BufferedSpipeConn{conn, make(chan []byte), make(chan struct{}, 1)}
 
 	go func() {
 		var buf [1024]byte
