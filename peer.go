@@ -95,20 +95,6 @@ func NewPeerState(conn net.Conn) *peerState {
 		can_receive_bitfield: true,
 	}
 
-	// Close connection after a 10 seconds inactivity
-	go func() {
-		for _ = range time.Tick(10 * time.Second) {
-			ps.conn.SetReadDeadline(time.Now())
-			_, err := ps.conn.Read([]byte{})
-			if err != nil {
-				ps.Close()
-				break
-			} else {
-				ps.conn.SetReadDeadline(time.Time{})
-			}
-		}
-	}()
-
 	return ps
 }
 
