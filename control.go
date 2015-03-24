@@ -392,6 +392,11 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(cs.ourExtensions, 0)
 	}
+
+	go func() {
+		cs.NewPeers <- peer
+	}()
+
 	cs.logf("AddPeer: added %s", btconn.conn.RemoteAddr().String())
 }
 
@@ -530,10 +535,6 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 	ip := p.conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	port := strconv.Itoa(int(message.Port))
 	peer := ip + ":" + port
-
-	go func() {
-		cs.NewPeers <- peer
-	}()
 
 	if cs.isNewerThan(message.Info.Rev) {
 		return
