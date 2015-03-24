@@ -646,22 +646,23 @@ func (cs *ControlSession) DoMetadata(msg []byte, p *peerState) (err error) {
 		cs.log("Couldn't encode ih message, returning now")
 		return err
 	}
+	rawInfo := tmpInfoBuf.Bytes()
 
 	pub := [ed.PublicKeySize]byte(cs.ID.Pub)
 	var sig [ed.SignatureSize]byte
 	copy(sig[0:ed.SignatureSize], message.Sig)
-	ok := ed.Verify(&pub, tmpInfoBuf.Bytes(), &sig)
+	ok := ed.Verify(&pub, rawInfo, &sig)
 	if !ok {
 		return errors.New("Bad Signature")
 	}
 
-	cs.session.SaveIHMessage(tmpInfoBuf.Bytes())
-	cs.log("DoMetadata: sending announce")
+	var test IHMessage
+	err = bencode.NewDecoder(bytes.NewReader(msg)).Decode(&test)
+	cs.session.SaveIHMessage(msg)
 	cs.Torrents <- Announce{
 		infohash: message.Info.InfoHash,
 		peer:     peer,
 	}
-	cs.log("DoMetadata: sent announce")
 
 	return
 }
