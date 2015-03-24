@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -559,9 +560,9 @@ func (t *TorrentSession) requestBlockImp(p *peerState, piece int, block int, req
 	}
 	// log.Println("Requesting block", piece, ".", block, length, request)
 	req[0] = opcode
-	uint32ToBytes(req[1:5], uint32(piece))
-	uint32ToBytes(req[5:9], uint32(begin))
-	uint32ToBytes(req[9:13], uint32(length))
+	binary.BigEndian.PutUint32(req[1:5], uint32(piece))
+	binary.BigEndian.PutUint32(req[5:9], uint32(begin))
+	binary.BigEndian.PutUint32(req[9:13], uint32(length))
 	requestIndex := (uint64(piece) << 32) | uint64(begin)
 	if !request {
 		delete(p.our_requests, requestIndex)
@@ -622,7 +623,7 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 						// log.Println("...telling ", p)
 						haveMsg := make([]byte, 5)
 						haveMsg[0] = HAVE
-						uint32ToBytes(haveMsg[1:5], uint32(piece))
+						binary.BigEndian.PutUint32(haveMsg[1:5], uint32(piece))
 						p.sendMessage(haveMsg)
 					}
 				}
@@ -752,7 +753,7 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		if len(message) != 5 {
 			return errors.New("Unexpected length")
 		}
-		n := bytesToUint32(message[1:])
+		n := binary.BigEndian.Uint32(message[1:])
 		if n < uint32(p.have.n) {
 			p.have.Set(int(n))
 			if !p.am_interested && !t.pieceSet.IsSet(int(n)) {
@@ -788,9 +789,9 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		if len(message) != 13 {
 			return errors.New("Unexpected message length")
 		}
-		index := bytesToUint32(message[1:5])
-		begin := bytesToUint32(message[5:9])
-		length := bytesToUint32(message[9:13])
+		index := binary.BigEndian.Uint32(message[1:5])
+		begin := binary.BigEndian.Uint32(message[5:9])
+		length := binary.BigEndian.Uint32(message[9:13])
 		if index >= uint32(p.have.n) {
 			return errors.New("piece out of range.")
 		}
@@ -811,8 +812,8 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		if len(message) < 9 {
 			return errors.New("unexpected message length")
 		}
-		index := bytesToUint32(message[1:5])
-		begin := bytesToUint32(message[5:9])
+		index := binary.BigEndian.Uint32(message[1:5])
+		begin := binary.BigEndian.Uint32(message[5:9])
 		length := len(message) - 9
 		if index >= uint32(p.have.n) {
 			return errors.New("piece out of range.")
@@ -842,9 +843,9 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		if len(message) != 13 {
 			return errors.New("Unexpected message length")
 		}
-		index := bytesToUint32(message[1:5])
-		begin := bytesToUint32(message[5:9])
-		length := bytesToUint32(message[9:13])
+		index := binary.BigEndian.Uint32(message[1:5])
+		begin := binary.BigEndian.Uint32(message[5:9])
+		length := binary.BigEndian.Uint32(message[9:13])
 		if index >= uint32(p.have.n) {
 			return errors.New("piece out of range.")
 		}
@@ -946,8 +947,8 @@ func (t *TorrentSession) sendRequest(peer *peerState, index, begin, length uint3
 		// log.Println("Sending block", index, begin, length)
 		buf := make([]byte, length+9)
 		buf[0] = PIECE
-		uint32ToBytes(buf[1:5], index)
-		uint32ToBytes(buf[5:9], begin)
+		binary.BigEndian.PutUint32(buf[1:5], index)
+		binary.BigEndian.PutUint32(buf[5:9], begin)
 		_, err = t.fileStore.ReadAt(buf[9:],
 			int64(index)*t.m.Info.PieceLength+int64(begin))
 		if err != nil {

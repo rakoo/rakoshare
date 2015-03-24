@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"log"
 	"net"
@@ -219,48 +220,17 @@ func (p *peerState) keepAlive(now time.Time) {
 // There's two goroutines per peer, one to read data from the peer, the other to
 // send data to the peer.
 
-func uint32ToBytes(buf []byte, n uint32) {
-	buf[0] = byte(n >> 24)
-	buf[1] = byte(n >> 16)
-	buf[2] = byte(n >> 8)
-	buf[3] = byte(n)
-}
-
-func writeNBOUint32(conn net.Conn, n uint32) (err error) {
-	var buf []byte = make([]byte, 4)
-	uint32ToBytes(buf, n)
-	_, err = conn.Write(buf[0:])
-	return
-}
-
-func bytesToUint32(buf []byte) uint32 {
-	return (uint32(buf[0]) << 24) |
-		(uint32(buf[1]) << 16) |
-		(uint32(buf[2]) << 8) | uint32(buf[3])
-}
-
-func readNBOUint32(conn net.Conn) (n uint32, err error) {
-	var buf [4]byte
-	_, err = conn.Read(buf[0:])
-	if err != nil {
-		return
-	}
-	n = bytesToUint32(buf[0:])
-	return
-}
-
 // This func is designed to be run as a goroutine. It
 // listens for messages on a channel and sends them to a peer.
 
 func (p *peerState) peerWriter(errorChan chan peerMessage) {
 	// log.Println("Writing messages")
 	for msg := range p.writeChan2 {
-		err := writeNBOUint32(p.conn, uint32(len(msg)))
-		if err != nil {
-			log.Printf("Failed to write len(msg): %s\n", err)
-			break
-		}
-		_, err = p.conn.Write(msg)
+		payload := make([]byte, 4+len(msg))
+		binary.BigEndian.PutUint32(payload[:4], uint32(len(msg)))
+		copy(payload[4:], msg)
+
+		_, err := p.conn.Write(payload)
 		if err != nil {
 			// log.Printf("Failed to write %d bytes to %s: %s\n", len(msg), p.address, err)
 			break
@@ -276,14 +246,16 @@ func (p *peerState) peerWriter(errorChan chan peerMessage) {
 func (p *peerState) peerReader(msgChan chan peerMessage) {
 	// log.Println("Reading messages")
 	for {
-		var n uint32
-		n, err := readNBOUint32(p.conn)
+		var size [4]byte
+		_, err := io.ReadFull(p.conn, size[:])
 		if err != nil {
 			if err != io.EOF {
-				// log.Printf("Failed to read len(msg): %s\n", err)
+				log.Println(err)
 			}
 			break
 		}
+
+		n := binary.BigEndian.Uint32(size[:])
 		if n > 130*1024 {
 			// log.Println("Message size too large: ", n)
 			break

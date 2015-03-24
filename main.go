@@ -286,10 +286,8 @@ mainLoop:
 			break mainLoop
 		case c := <-conChan:
 			if currentSession.Matches(c.infohash) {
-				log.Println("[MAIN] New conn for current:", c.conn.RemoteAddr().String())
 				currentSession.AcceptNewPeer(c)
 			} else if controlSession.Matches(c.infohash) {
-				log.Println("[MAIN] New conn for control:", c.conn.RemoteAddr().String())
 				controlSession.AcceptNewPeer(c)
 			}
 		case announce := <-lpd.announces:
