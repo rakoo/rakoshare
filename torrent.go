@@ -122,7 +122,7 @@ type TorrentSessionI interface {
 	Matches(ih string) bool
 	AcceptNewPeer(btc *btConn)
 	DoTorrent()
-	hintNewPeer(peer string)
+	hintNewPeer(peer string) bool
 }
 
 type TorrentSession struct {
@@ -130,7 +130,7 @@ type TorrentSession struct {
 	si              *SessionInfo
 	torrentHeader   []byte
 	fileStore       FileStore
-	peers           map[string]*peerState
+	peers           *Peers
 	peerMessageChan chan peerMessage
 	pieceSet        *bitset.Bitset // The pieces we have
 	totalPieces     int
@@ -151,7 +151,7 @@ type TorrentSession struct {
 func NewTorrentSession(shareId id.Id, target, torrent string, listenPort int) (ts *TorrentSession, err error) {
 	t := &TorrentSession{
 		Id:              shareId,
-		peers:           make(map[string]*peerState),
+		peers:           newPeers(),
 		peerMessageChan: make(chan peerMessage),
 		activePieces:    make(map[int]*ActivePiece),
 		quit:            make(chan bool),
@@ -274,11 +274,13 @@ func (ts *TorrentSession) Header() (header []byte) {
 	return
 }
 
-// Try to connect if the peer is not already in our peers
-func (ts *TorrentSession) hintNewPeer(peer string) {
-	if _, ok := ts.peers[peer]; !ok {
-		go ts.connectToPeer(peer)
+func (ts *TorrentSession) hintNewPeer(peer string) (isnew bool) {
+	if ts.peers.Know(peer, "") {
+		return false
 	}
+
+	go ts.connectToPeer(peer)
+	return true
 }
 
 func (ts *TorrentSession) connectToPeer(peer string) {
@@ -319,6 +321,12 @@ func (ts *TorrentSession) connectToPeer(peer string) {
 }
 
 func (t *TorrentSession) AcceptNewPeer(btconn *btConn) {
+	// If it's us, we don't need to continue
+	if btconn.id == t.si.PeerId {
+		btconn.conn.Close()
+		return
+	}
+
 	_, err := btconn.conn.Write(t.Header())
 	if err != nil {
 		return
@@ -330,8 +338,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	log.Println("[TORRENT] AddPeer: Adding peer", peer)
-	if len(t.peers) >= MAX_NUM_PEERS {
+	if t.peers.Len() >= MAX_NUM_PEERS {
 		log.Println("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
 		return
@@ -339,7 +346,11 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	ps := NewPeerState(btconn.conn)
 	ps.address = peer
 	ps.id = btconn.id
-	t.peers[peer] = ps
+
+	if keep := t.peers.Add(ps); !keep {
+		log.Printf("[TORRENT] Not keeping %s -- %s\n", ps.address, ps.id)
+		return
+	}
 
 	if int(theirheader[5])&0x10 == 0x10 {
 		ps.SendExtensions(t.si.OurExtensions, int64(len(t.m.RawInfo())))
@@ -362,6 +373,8 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	// first to be sent.
 	go ps.peerWriter(t.peerMessageChan)
 	go ps.peerReader(t.peerMessageChan)
+
+	log.Printf("[TORRENT] AddPeer: added %s\n", btconn.conn.RemoteAddr().String())
 }
 
 func (t *TorrentSession) ClosePeer(peer *peerState) {
@@ -370,8 +383,8 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 	}
 
 	t.removeRequests(peer)
+	t.peers.Delete(peer)
 	peer.Close()
-	delete(t.peers, peer.address)
 }
 
 func (t *TorrentSession) deadlockDetector(quit chan struct{}) {
@@ -395,7 +408,7 @@ deadlockLoop:
 
 func (t *TorrentSession) Quit() (err error) {
 	t.quit <- true
-	for _, peer := range t.peers {
+	for _, peer := range t.peers.All() {
 		t.ClosePeer(peer)
 	}
 	return nil
@@ -426,29 +439,27 @@ func (t *TorrentSession) DoTorrent() {
 			}
 		case <-rechokeChan:
 			// TODO: recalculate who to choke / unchoke
-			t.heartbeat <- true
-			if len(t.peers) < TARGET_NUM_PEERS && t.goodPieces < t.totalPieces {
+
+			// Try to have at least 1 active piece per peer + 1 active piece
+			if len(t.activePieces) < t.peers.Len()+1 {
+				log.Printf("[TORRENT] Rechoke: querying %d\n", t.peers.Len())
+				for _, peer := range t.peers.All() {
+					log.Printf("[TORRENT] Rechoke: querying block to %s\n", peer.address)
+					t.RequestBlock(peer)
+				}
 			}
+
+			t.heartbeat <- true
 		case <-verboseChan:
 			ratio := float64(0.0)
 			if t.si.Downloaded > 0 {
 				ratio = float64(t.si.Uploaded) / float64(t.si.Downloaded)
 			}
 			log.Printf("[CURRENT] Peers: %d, good/total: %d/%d, ratio: %f\n",
-				len(t.peers), t.goodPieces, t.totalPieces, ratio)
+				t.peers.Len(), t.goodPieces, t.totalPieces, ratio)
 		case <-keepAliveChan:
 			now := time.Now()
-			count := make(map[*peerState]int)
-			for _, peer := range t.peers {
-				count[peer]++
-			}
-			for peer, counted := range count {
-				if counted > 1 {
-					t.ClosePeer(peer)
-				}
-			}
-
-			for _, peer := range t.peers {
+			for _, peer := range t.peers.All() {
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 3*time.Minute {
 					// log.Println("Closing peer", peer.address, "because timed out.")
 					t.ClosePeer(peer)
@@ -584,7 +595,7 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 		requestCount := v.recordBlock(int(block))
 		if requestCount > 1 {
 			// Someone else has also requested this, so send cancel notices
-			for _, peer := range t.peers {
+			for _, peer := range t.peers.All() {
 				if p != peer {
 					if _, ok := peer.our_requests[requestIndex]; ok {
 						t.requestBlockImp(peer, int(piece), int(block), false)
@@ -615,7 +626,7 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 
 				// TODO: Drop connections to all seeders.
 			}
-			for _, p := range t.peers {
+			for _, p := range t.peers.All() {
 				if p.have != nil {
 					if p.have.IsSet(int(piece)) {
 						// We don't do anything special. We rely on the caller
@@ -754,11 +765,22 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		if len(message) != 5 {
 			return errors.New("Unexpected length")
 		}
-		n := binary.BigEndian.Uint32(message[1:])
-		if n < uint32(p.have.n) {
-			p.have.Set(int(n))
-			if !p.am_interested && !t.pieceSet.IsSet(int(n)) {
+		piece := binary.BigEndian.Uint32(message[1:])
+		if p.have.IsWithinLimits(int(piece)) {
+			log.Printf("[TORRENT] Set have at %d for %s\n", piece, p.address)
+			p.have.Set(int(piece))
+			if !p.am_interested && !t.pieceSet.IsSet(int(piece)) {
 				p.SetInterested(true)
+
+				log.Printf("[TORRENT] %s has %d, asking for it", p.address, piece)
+				// TODO DRY up, this is a copy paste from RequestBlock
+				pieceLength := int(t.m.Info.PieceLength)
+				if int(piece) == t.totalPieces-1 {
+					pieceLength = t.lastPieceLength
+				}
+				pieceCount := (pieceLength + STANDARD_BLOCK_LENGTH - 1) / STANDARD_BLOCK_LENGTH
+				t.activePieces[int(piece)] = &ActivePiece{make([]int, pieceCount), pieceLength}
+				t.RequestBlock2(p, int(piece), false)
 			}
 		} else {
 			return errors.New("have index is out of range.")
@@ -787,7 +809,6 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 			}
 		}
 	case REQUEST:
-		// log.Println("request", p.address)
 		if len(message) != 13 {
 			return errors.New("Unexpected message length")
 		}

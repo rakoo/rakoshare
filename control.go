@@ -14,7 +14,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rakoo/rakoshare/pkg/id"
@@ -33,82 +32,6 @@ var (
 )
 
 var useDHT = flag.Bool("useDHT", true, "Use DHT to get peers")
-
-type lockedPeers struct {
-	sync.Mutex
-	peers []*peerState
-}
-
-func newLockedPeers() *lockedPeers {
-	return &lockedPeers{peers: make([]*peerState, 0)}
-}
-
-func (lp *lockedPeers) know(peer string) bool {
-	lp.Lock()
-	defer lp.Unlock()
-
-	for _, p := range lp.peers {
-		host, _, err := net.SplitHostPort(p.address)
-		if err != nil {
-			return false
-		}
-		if host == peer {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (lp *lockedPeers) Peers() []*peerState {
-	lp.Lock()
-	defer lp.Unlock()
-
-	ret := make([]*peerState, len(lp.peers))
-	for i, p := range lp.peers {
-		ret[i] = p
-	}
-	return ret
-}
-
-func (lp *lockedPeers) Len() (l int) {
-	lp.Lock()
-	l = len(lp.peers)
-	lp.Unlock()
-	return l
-}
-
-func (lp *lockedPeers) Add(peer *peerState) {
-	lp.Lock()
-	lp.peers = append(lp.peers, peer)
-	lp.Unlock()
-}
-
-func (lp *lockedPeers) Delete(peer *peerState) {
-	lp.Lock()
-	defer lp.Unlock()
-
-	for i, p := range lp.peers {
-		if p.address == peer.address {
-			// We don't care about the order, just put the last one here
-			lp.peers[i] = lp.peers[len(lp.peers)-1]
-			lp.peers = lp.peers[:len(lp.peers)-1]
-			return
-		}
-	}
-}
-
-func (lp *lockedPeers) HasPeer(peer string) bool {
-	lp.Lock()
-	defer lp.Unlock()
-
-	for _, p := range lp.peers {
-		if p.address == peer {
-			return true
-		}
-	}
-	return false
-}
 
 type ControlSession struct {
 	ID     id.Id
@@ -132,7 +55,7 @@ type ControlSession struct {
 	header          []byte
 	quit            chan struct{}
 	dht             *dht.DHT
-	p               *lockedPeers
+	peers           *Peers
 	peerMessageChan chan peerMessage
 
 	trackers []string
@@ -183,7 +106,7 @@ func NewControlSession(shareid id.Id, listenPort int, session *sharesession.Sess
 			1: "ut_pex",
 			2: "bs_metadata",
 		},
-		p: newLockedPeers(),
+		peers: newPeers(),
 
 		currentIH: currentIhMessage.Info.InfoHash,
 		rev:       rev,
@@ -318,29 +241,15 @@ func (cs *ControlSession) Run() {
 		case <-rechokeChan:
 			// TODO: recalculate who to choke / unchoke
 			heartbeat <- struct{}{}
-			if cs.p.Len() < TARGET_NUM_PEERS {
+			if cs.peers.Len() < TARGET_NUM_PEERS {
 				go cs.dht.PeersRequest(string(cs.ID.Infohash), true)
 			}
 		case <-verboseChan:
-			cs.log("Peers:", cs.p.Len())
+			cs.log("Peers:", cs.peers.Len())
 		case <-keepAliveChan:
 			now := time.Now()
 
-			seen := make(map[string]struct{})
-
-			for _, peer := range cs.p.Peers() {
-
-				host, _, err := net.SplitHostPort(peer.address)
-				if err != nil {
-					continue
-				}
-				// If we have duplicate, remove them
-				if _, ok := seen[host]; ok {
-					cs.ClosePeer(peer)
-					continue
-				}
-				seen[host] = struct{}{}
-
+			for _, peer := range cs.peers.All() {
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 3*time.Minute {
 					// log.Println("Closing peer", peer.address, "because timed out.")
 					cs.ClosePeer(peer)
@@ -360,7 +269,7 @@ func (cs *ControlSession) Run() {
 
 func (cs *ControlSession) Quit() error {
 	cs.quit <- struct{}{}
-	for _, peer := range cs.p.Peers() {
+	for _, peer := range cs.peers.All() {
 		cs.ClosePeer(peer)
 	}
 	if cs.dht != nil {
@@ -413,7 +322,7 @@ func (cs *ControlSession) connectToPeer(peer string) {
 		id:       id,
 		conn:     conn,
 	}
-	cs.session.SavePeer(conn.RemoteAddr().String(), cs.p.HasPeer)
+	cs.session.SavePeer(conn.RemoteAddr().String(), cs.peers.HasPeer)
 	cs.AddPeer(btconn)
 }
 
@@ -421,10 +330,6 @@ func (cs *ControlSession) backoffHintNewPeer(peer string) {
 	go func() {
 		for backoff := 1; backoff < 5; backoff++ {
 			cs.hintNewPeer(peer)
-			if cs.p.know(peer) {
-				return
-			}
-
 			wait := 10 * int(math.Pow(float64(2), float64(backoff)))
 			// cs.logf("backoff for %s: %d", peer, wait)
 			<-time.After(time.Duration(wait) * time.Second)
@@ -434,13 +339,8 @@ func (cs *ControlSession) backoffHintNewPeer(peer string) {
 }
 
 func (cs *ControlSession) hintNewPeer(peer string) (isnew bool) {
-	newHost, _, err := net.SplitHostPort(peer)
-	if err != nil {
+	if cs.peers.Know(peer, "") {
 		return false
-	}
-
-	if cs.p.know(newHost) {
-		return true
 	}
 
 	go cs.connectToPeer(peer)
@@ -451,10 +351,6 @@ func (cs *ControlSession) AcceptNewPeer(btconn *btConn) {
 	// If it's us, we don't need to continue
 	if btconn.id == cs.PeerID {
 		btconn.conn.Close()
-		return
-	}
-
-	if cs.p.know(btconn.conn.RemoteAddr().String()) {
 		return
 	}
 
@@ -471,7 +367,7 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	theirheader := btconn.header
 
 	peer := btconn.conn.RemoteAddr().String()
-	if cs.p.Len() >= MAX_NUM_PEERS {
+	if cs.peers.Len() >= MAX_NUM_PEERS {
 		cs.log("We have enough peers. Rejecting additional peer", peer)
 		btconn.conn.Close()
 		return
@@ -479,14 +375,17 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 	ps := NewPeerState(btconn.conn)
 	ps.address = peer
 	ps.id = btconn.id
+
+	if keep := cs.peers.Add(ps); !keep {
+		return
+	}
+
 	// If 128, then it supports DHT.
 	if int(theirheader[7])&0x01 == 0x01 {
 		// It's OK if we know this node already. The DHT engine will
 		// ignore it accordingly.
 		go cs.dht.AddNode(ps.address)
 	}
-
-	cs.p.Add(ps)
 	go ps.peerWriter(cs.peerMessageChan)
 	go ps.peerReader(cs.peerMessageChan)
 
@@ -497,7 +396,7 @@ func (cs *ControlSession) AddPeer(btconn *btConn) {
 }
 
 func (cs *ControlSession) ClosePeer(peer *peerState) {
-	cs.p.Delete(peer)
+	cs.peers.Delete(peer)
 	peer.Close()
 	cs.backoffHintNewPeer(peer.address)
 }
@@ -739,7 +638,7 @@ func (cs *ControlSession) SetCurrent(ih string) error {
 }
 
 func (cs *ControlSession) broadcast(message IHMessage) {
-	for _, ps := range cs.p.Peers() {
+	for _, ps := range cs.peers.All() {
 		if _, ok := ps.theirExtensions["bs_metadata"]; !ok {
 			continue
 		}

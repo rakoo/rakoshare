@@ -325,11 +325,9 @@ mainLoop:
 			currentSession = tentativeSession
 			go currentSession.DoTorrent()
 
-			controlSession.p.Lock()
-			for _, peer := range controlSession.p.peers {
+			for _, peer := range controlSession.peers.All() {
 				currentSession.hintNewPeer(peer.address)
 			}
-			controlSession.p.Unlock()
 		case announce := <-controlSession.Torrents:
 			if controlSession.currentIH == announce.infohash && !currentSession.IsEmpty() {
 				break
@@ -378,13 +376,13 @@ mainLoop:
 
 type EmptyTorrent struct{}
 
-func (et EmptyTorrent) Quit() error                 { return nil }
-func (et EmptyTorrent) Matches(ih string) bool      { return false }
-func (et EmptyTorrent) AcceptNewPeer(btc *btConn)   {}
-func (et EmptyTorrent) DoTorrent()                  {}
-func (et EmptyTorrent) hintNewPeer(peer string)     {}
-func (et EmptyTorrent) IsEmpty() bool               { return true }
-func (et EmptyTorrent) NewMetaInfo() chan *MetaInfo { return nil }
+func (et EmptyTorrent) Quit() error                  { return nil }
+func (et EmptyTorrent) Matches(ih string) bool       { return false }
+func (et EmptyTorrent) AcceptNewPeer(btc *btConn)    {}
+func (et EmptyTorrent) DoTorrent()                   {}
+func (et EmptyTorrent) hintNewPeer(peer string) bool { return true }
+func (et EmptyTorrent) IsEmpty() bool                { return true }
+func (et EmptyTorrent) NewMetaInfo() chan *MetaInfo  { return nil }
 
 func listenSigInt() chan os.Signal {
 	c := make(chan os.Signal)

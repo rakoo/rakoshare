@@ -23,8 +23,13 @@ const (
 	SUPPORTS_HOLE_PUNCHING
 )
 
+type pexPeer struct {
+	address string
+	id      string
+}
+
 var (
-	lastPeers []string
+	lastPeers []pexPeer
 )
 
 type Flag struct {
@@ -76,20 +81,20 @@ type PexMessage struct {
 // we aren't currently connected to.
 func (t *TorrentSession) StartPex() {
 	for _ = range time.Tick(1 * time.Minute) {
-		newLastPeers := make([]string, 0)
+		newLastPeers := make([]pexPeer, 0)
 
 		numadded := 0
 		added := ""
 		addedf := ""
 
 		// TODO randomize to distribute more evenly
-		for peerstring, _ := range t.peers {
-			newLastPeers = append(newLastPeers, peerstring)
+		for _, peer := range t.peers.All() {
+			newLastPeers = append(newLastPeers, pexPeer{peer.address, peer.id})
 
-			if contains(lastPeers, peerstring) {
+			if contains(lastPeers, peer) {
 				continue
 			}
-			added += nettools.DottedPortToBinary(peerstring)
+			added += nettools.DottedPortToBinary(peer.address)
 
 			// We don't manage those yet
 			addedf += string(0x00)
@@ -101,13 +106,13 @@ func (t *TorrentSession) StartPex() {
 		}
 
 		dropped := ""
-		for _, peerstring := range lastPeers {
-			if _, ok := t.peers[peerstring]; !ok {
-				dropped += nettools.DottedPortToBinary(peerstring)
+		for _, lastPeer := range lastPeers {
+			if !t.peers.Know(lastPeer.address, lastPeer.id) {
+				dropped += nettools.DottedPortToBinary(lastPeer.address)
 			}
 		}
 
-		for _, p := range t.peers {
+		for _, p := range t.peers.All() {
 			p.sendExtensionMessage("ut_pex", PexMessage{
 				Added:   added,
 				AddedF:  addedf,
@@ -166,9 +171,9 @@ func stringToFlags(in string) (flags []*Flag) {
 	return
 }
 
-func contains(all []string, one string) bool {
+func contains(all []pexPeer, peer *peerState) bool {
 	for _, maybe := range all {
-		if one == maybe {
+		if peer.id == maybe.id && peer.address == maybe.address {
 			return true
 		}
 	}
