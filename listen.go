@@ -56,10 +56,11 @@ func listenForPeerConnections(key []byte) (conChan chan *btConn, listenPort int,
 
 			go func() {
 				conn := spipe.Server(key, tcpConn)
-				header, err := readHeader(conn)
+				bconn := newBufferedSpipeConn(conn)
+				header, err := readHeader(bconn)
 				if err != nil {
 					//log.Println("Error reading header: ", err)
-					conn.Close()
+					bconn.Close()
 					return
 				}
 				peersInfoHash := string(header[8:28])
@@ -68,7 +69,7 @@ func listenForPeerConnections(key []byte) (conChan chan *btConn, listenPort int,
 					header:   header,
 					infohash: peersInfoHash,
 					id:       id,
-					conn:     conn,
+					conn:     bconn,
 				}
 			}()
 		}

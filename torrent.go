@@ -531,11 +531,13 @@ func (t *TorrentSession) checkRange(p *peerState, start, end int) (piece int) {
 
 func (t *TorrentSession) RequestBlock2(p *peerState, piece int, endGame bool) (err error) {
 	v := t.activePieces[piece]
-	block := v.chooseBlockToDownload(endGame)
-	if block >= 0 {
-		t.requestBlockImp(p, piece, block, true)
-	} else {
-		return io.EOF
+	for {
+		block := v.chooseBlockToDownload(endGame)
+		if block >= 0 {
+			t.requestBlockImp(p, piece, block, true)
+		} else {
+			break
+		}
 	}
 	return
 }
