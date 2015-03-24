@@ -6,6 +6,7 @@ import (
 	"log"
 
 	bencode "github.com/jackpal/bencode-go"
+	"github.com/rakoo/rakoshare/pkg/bitset"
 )
 
 type messagetype int
@@ -143,10 +144,10 @@ func (t *TorrentSession) DoMetadata(msg []byte, p *peerState) {
 
 		if p.have == nil {
 			if p.temporaryBitfield != nil {
-				p.have = NewBitsetFromBytes(t.totalPieces, p.temporaryBitfield)
+				p.have = bitset.NewFromBytes(t.totalPieces, p.temporaryBitfield)
 				p.temporaryBitfield = nil
 			} else {
-				p.have = NewBitset(t.totalPieces)
+				p.have = bitset.New(t.totalPieces)
 			}
 		}
 		if p.have == nil {

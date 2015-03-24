@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+
+	"github.com/rakoo/rakoshare/pkg/bitset"
 )
 
-func checkPieces(fs FileStore, totalLength int64, m *MetaInfo) (good, bad int, goodBits *Bitset, err error) {
+func checkPieces(fs FileStore, totalLength int64, m *MetaInfo) (good, bad int, goodBits *bitset.Bitset, err error) {
 	pieceLength := m.Info.PieceLength
 	numPieces := int((totalLength + pieceLength - 1) / pieceLength)
-	goodBits = NewBitset(int(numPieces))
+	goodBits = bitset.New(int(numPieces))
 	ref := m.Info.Pieces
 	if len(ref) != numPieces*sha1.Size {
 		err = errors.New(fmt.Sprintf("Incorrect Info.Pieces length: expected %d, got %d", len(ref), numPieces*sha1.Size))

@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/rakoo/rakoshare/pkg/bitset"
 	"github.com/zeebo/bencode"
 )
 
@@ -27,7 +28,7 @@ type peerState struct {
 	writeChan2      chan []byte
 	lastWriteTime   time.Time
 	lastReadTime    time.Time
-	have            *Bitset // What the peer has told us it has
+	have            *bitset.Bitset // What the peer has told us it has
 	conn            net.Conn
 	am_choking      bool // this client is choking the peer
 	am_interested   bool // this client is interested in the peer
@@ -151,7 +152,7 @@ func (p *peerState) SetInterested(interested bool) {
 	}
 }
 
-func (p *peerState) SendBitfield(bs *Bitset) {
+func (p *peerState) SendBitfield(bs *bitset.Bitset) {
 	msg := make([]byte, len(bs.Bytes())+1)
 	msg[0] = BITFIELD
 	copy(msg[1:], bs.Bytes())

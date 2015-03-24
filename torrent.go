@@ -16,6 +16,7 @@ import (
 
 	"github.com/zeebo/bencode"
 
+	"github.com/rakoo/rakoshare/pkg/bitset"
 	"github.com/rakoo/rakoshare/pkg/id"
 )
 
@@ -131,7 +132,7 @@ type TorrentSession struct {
 	fileStore       FileStore
 	peers           map[string]*peerState
 	peerMessageChan chan peerMessage
-	pieceSet        *Bitset // The pieces we have
+	pieceSet        *bitset.Bitset // The pieces we have
 	totalPieces     int
 	totalSize       int64
 	lastPieceLength int
@@ -353,7 +354,7 @@ func (t *TorrentSession) AddPeer(btconn *btConn) {
 	if t.si.HaveTorrent {
 		// By default, a peer has no pieces. If it has pieces, it should send
 		// a BITFIELD message as a first message
-		ps.have = NewBitset(t.totalPieces)
+		ps.have = bitset.New(t.totalPieces)
 	}
 
 	// Note that we need to launch these at the end of initialisation, so
@@ -769,10 +770,11 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		}
 		p.SetChoke(false) // TODO: better choke policy
 
-		p.have = NewBitsetFromBytes(t.totalPieces, message[1:])
+		p.have = bitset.NewFromBytes(t.totalPieces, message[1:])
 		if p.have == nil {
 			return errors.New("Invalid bitfield data.")
 		}
+
 		t.checkInteresting(p)
 		p.can_receive_bitfield = false
 
@@ -792,7 +794,7 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		index := binary.BigEndian.Uint32(message[1:5])
 		begin := binary.BigEndian.Uint32(message[5:9])
 		length := binary.BigEndian.Uint32(message[9:13])
-		if index >= uint32(p.have.n) {
+		if !p.have.IsWithinLimits(int(index)) {
 			return errors.New("piece out of range.")
 		}
 		if !t.pieceSet.IsSet(int(index)) {
@@ -815,7 +817,7 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		index := binary.BigEndian.Uint32(message[1:5])
 		begin := binary.BigEndian.Uint32(message[5:9])
 		length := len(message) - 9
-		if index >= uint32(p.have.n) {
+		if !p.have.IsWithinLimits(int(index)) {
 			return errors.New("piece out of range.")
 		}
 		if t.pieceSet.IsSet(int(index)) {
@@ -846,7 +848,7 @@ func (t *TorrentSession) generalMessage(message []byte, p *peerState) (err error
 		index := binary.BigEndian.Uint32(message[1:5])
 		begin := binary.BigEndian.Uint32(message[5:9])
 		length := binary.BigEndian.Uint32(message[9:13])
-		if index >= uint32(p.have.n) {
+		if !p.have.IsWithinLimits(int(index)) {
 			return errors.New("piece out of range.")
 		}
 		if !t.pieceSet.IsSet(int(index)) {

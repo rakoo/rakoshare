@@ -1,4 +1,4 @@
-package main
+package bitset
 
 // As defined by the bittorrent protocol, this bitset is big-endian, such that
 // the high bit of the first byte is block 0
@@ -10,7 +10,7 @@ type Bitset struct {
 	endMask  byte // Which bits of the last byte are valid
 }
 
-func NewBitset(n int) *Bitset {
+func New(n int) *Bitset {
 	endIndex, endOffset := n>>3, n&7
 	endMask := ^byte(255 >> byte(endOffset))
 	if endOffset == 0 {
@@ -21,8 +21,8 @@ func NewBitset(n int) *Bitset {
 
 // Creates a new bitset from a given byte stream. Returns nil if the
 // data is invalid in some way.
-func NewBitsetFromBytes(n int, data []byte) *Bitset {
-	bitset := NewBitset(n)
+func NewFromBytes(n int, data []byte) *Bitset {
+	bitset := New(n)
 	if len(bitset.b) != len(data) {
 		return nil
 	}
@@ -99,4 +99,8 @@ func (b *Bitset) FindNextClear(index int) int {
 
 func (b *Bitset) Bytes() []byte {
 	return b.b
+}
+
+func (b *Bitset) IsWithinLimits(n int) bool {
+	return n < b.n
 }
