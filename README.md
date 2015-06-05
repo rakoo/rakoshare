@@ -23,9 +23,11 @@ Rakoshare might currently eat your data if you're not cautious.
 
 Tested on Linux.
 
-[x] On-the-fly encryption with [spiped](https://github.com/dchest/spipe)
-[/] Capabilities on the model of Tahoe-LAFS
-      -> still lacking at-rest encryption
+- [x] On-the-fly encryption with [spiped](https://github.com/dchest/spipe)
+- [ ] Capabilities on the model of Tahoe-LAFS
+  - [x] ReadWrite capability
+  - [x] Read capability
+  - [ ] Store capability (ie keep data on disk without being able to read it)
 
 Development Roadmap
 -------------------
@@ -70,7 +72,7 @@ Usage Instructions
 
 2. Start sharing content:
 
-  `$ ./rakoshare share -id <one of the previous id>
+  `$ ./rakoshare share -id <one of the previous id>`
 
   If you use the WriteReadStore id, any change you make will be
   propagated. If you use the ReadStore id, no local changes will be
@@ -89,7 +91,20 @@ For more info:
 Demo !
 ------
 
-Demo is down, working on it.
+I'm fetching a slew of pics from /r/EarthPorn with
+[redditEarthPorn](https://github.com/rakoo/redditEarthPorn) that are
+then shared with a rakoshare instance that I run on my server. Use id
+evK5HghADU2GrgM2NWFyKsRUj4ymkhoagz9DXgpW6EcN to receive a bunch of
+gorgeous images, courtesy of reddit users ! The folder is updated
+approximately every hour, and I will do my best to cap the size of the
+folder to a reasonable amount (expect ~ 70 MB).
+
+To test locally:
+
+  `$ ./rakoshare share -id evK5HghADU2GrgM2NWFyKsRUj4ymkhoagz9DXgpW6EcN -dir /some/dir/`
+
+Note that this id is read-only, meaning you can't modify what is
+shared by everyone.
 
 Third-party Packages
 --------------------
