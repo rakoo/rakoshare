@@ -442,9 +442,7 @@ func (t *TorrentSession) DoTorrent() {
 
 			// Try to have at least 1 active piece per peer + 1 active piece
 			if len(t.activePieces) < t.peers.Len()+1 {
-				log.Printf("[TORRENT] Rechoke: querying %d\n", t.peers.Len())
 				for _, peer := range t.peers.All() {
-					log.Printf("[TORRENT] Rechoke: querying block to %s\n", peer.address)
 					t.RequestBlock(peer)
 				}
 			}
