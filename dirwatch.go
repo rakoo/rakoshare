@@ -77,52 +77,36 @@ func (w *Watcher) watch() {
 	// All paths in previous scan, sorted alphabetically
 	previousScanPaths := []string{}
 
-	// All paths in current torrent, sorted alphabetically
-	torrentPaths := []string{}
+	w.lock.Lock()
+	currentTorrent := w.session.GetCurrentTorrent()
+	if len(currentTorrent) != 0 {
+		m, err := NewMetaInfoFromContent([]byte(currentTorrent))
+		if err == nil {
+			for _, f := range m.Info.Files {
+				previousScanPaths = append(previousScanPaths, filepath.Join(f.Path...))
+			}
+		}
+	}
+	w.lock.Unlock()
 
 	for _ = range time.Tick(10 * time.Second) {
 		w.lock.Lock()
 
-		currentTorrent := w.session.GetCurrentTorrent()
-		if len(currentTorrent) != 0 {
-			torrentPaths = []string{}
-			m, err := NewMetaInfoFromContent([]byte(currentTorrent))
-			if err == nil {
-				for _, f := range m.Info.Files {
-					torrentPaths = append(torrentPaths, filepath.Join(f.Path...))
-				}
-			}
-		}
-
-		scanPaths := []string{}
-
 		err := torrentWalk(w.watchedDir, func(path string, info os.FileInfo, perr error) (err error) {
+			if perr != nil {
+				return perr
+			}
+
 			if info.ModTime().After(compareTime) {
-				fmt.Printf("[newer] %s\n", path)
+				fmt.Printf("[TORRENTWATCH] newer at %s\n", path)
 				return errNewFile
 			}
-			scanPaths = append(scanPaths, path)
-			return
+			return nil
 		})
 
 		w.lock.Unlock()
 
-		// Check if the folder has changed:
-		// - if any number of file was added or removed
-		// - if any number of file path were changed
-		hasChanged := err == errNewFile
-		if len(scanPaths) != len(previousScanPaths) {
-			hasChanged = true
-		} else {
-			for i := range scanPaths {
-				if previousScanPaths[i] != scanPaths[i] {
-					hasChanged = true
-					break
-				}
-			}
-		}
-
-		if hasChanged {
+		if err == errNewFile {
 			currentState = CHANGED
 		} else if err == nil {
 			currentState = IDEM
@@ -148,7 +132,6 @@ func (w *Watcher) watch() {
 			w.PingNewTorrent <- ih
 		}
 
-		previousScanPaths = scanPaths
 		previousState = currentState
 	}
 }
