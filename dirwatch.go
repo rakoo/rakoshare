@@ -300,7 +300,7 @@ func (h *BlockHasher) Close() (err error) {
 
 func torrentWalk(root string, fn filepath.WalkFunc) (err error) {
 	return filepath.Walk(root, func(path string, info os.FileInfo, perr error) (err error) {
-		if !info.Mode().IsRegular() {
+		if info == nil || !info.Mode().IsRegular() {
 			return
 		}
 
